@@ -35,19 +35,23 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (24 total)
+## Tools (25 total)
 
-### Read (12 tools)
+### Read and service (19 tools)
 
 | Tool | Description |
 |---|---|
 | `ping` | Confirm server availability |
 | `world_summary` | Actor/scene/item/combat/user counts |
-| `system_info` | Foundry version, world info, active modules |
+| `system_info` | Foundry version, `dnd5e` version, content rules sources, active modules |
 | `search_actors` | Search actors by name + optional type filter |
-| `get_actor` | Full actor document with derived stats (AC, HP, saves, skills) |
-| `search_items` | Search items by name + optional type filter |
-| `get_item` | Full item document |
+| `get_actor` | Raw actor data for debugging; embedded Items are opt-in |
+| `get_5e_actor_summary` | Concise 5e HP, AC, abilities, spell slots, Item/activity counts, and rules mix |
+| `list_actor_items` | Paginated embedded Item list, filterable by name, type, and 2014/2024 source |
+| `list_item_activities` | Paginated embedded Activity list, filterable by Item, name, type, and rules source |
+| `validate_5e_actor` | Report large documents, rules mix, Item/activity counts, and custom Activity types |
+| `search_items` | Search world-level items by name + optional type filter |
+| `get_item` | Full world-level Item document |
 | `get_scenes` | All scenes with activation status |
 | `get_scene_tokens` | Tokens on a scene (positions, actors, disposition, vision) |
 | `get_combat_state` | Active combat: round, turn, sorted combatants, initiative |
@@ -55,10 +59,6 @@ mcp_servers:
 | `search_journal` | Full-text search journal entries by name + content |
 | `get_journal_entry` | Journal entry with all page content |
 | `get_users` | All users with roles and online status |
-| `list_compendiums` | All compendium packs with document counts |
-| `search_compendium` | Search a pack by name (e.g., `dnd5e.monsters?query=dragon`) |
-| `list_macros` | All macros with execution permissions |
-| `execute_macro` | Execute a macro by ID |
 | `refresh_world` | Verify sidecar connectivity |
 
 ### Dice (1 tool)
@@ -67,13 +67,14 @@ mcp_servers:
 |---|---|
 | `roll_dice` | Any formula: `1d20+5`, `4d6kh3`, `d%`, `adv`, `dis` |
 
-### Write (4 tools, gated by `FOUNDRY_WRITE_ENABLED`)
+### Write (5 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
 | Tool | Description |
 |---|---|
 | `update_actor` | Patch actor system attributes (`system.hp.value`, `system.currency.gp`, etc.) |
-| `set_initiative` | Set a combatant's initiative |
-| `next_turn` | Advance combat (fires hooks, effects, sounds — uses `combat.nextTurn()`) |
+| `create_actor` | Create a minimal actor; use Plutonium for complete 5e characters and creatures |
+| `delete_actor` | Delete an actor by ID |
+| `next_turn` | Advance combat through the sidecar's current internal combat operation |
 | `create_chat_message` | Post to Foundry chat |
 
 ## Sidecar
@@ -102,10 +103,15 @@ API_KEY=mcp-bridge-key-2026
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/mcp/refresh` | Health check |
+| POST | `/api/mcp/refresh` | Verify and refresh the current world snapshot |
 | GET | `/api/mcp/world-summary` | Counts |
-| GET | `/api/mcp/system-info` | Version, modules |
+| GET | `/api/mcp/system-info` | Foundry/system metadata, content rules sources, modules |
 | GET | `/api/mcp/actors` | Search actors |
-| GET | `/api/mcp/actors/:id` | One actor |
+| GET | `/api/mcp/actors/:id` | Raw actor without embedded Items by default (`?includeItems=true` for debugging) |
+| GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
+| GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
+| GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
+| GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
 | POST | `/api/mcp/actors/:id/update` | Update actor system |
 | GET | `/api/mcp/items` | Search items |
 | GET | `/api/mcp/items/:id` | One item |
@@ -118,14 +124,12 @@ API_KEY=mcp-bridge-key-2026
 | GET | `/api/mcp/journal` | Search journal |
 | GET | `/api/mcp/journal/:id` | One entry |
 | GET | `/api/mcp/users` | All users |
-| GET | `/api/mcp/macros` | All macros |
-| POST | `/api/mcp/macros/:id/execute` | Execute macro |
 
 ## Foundry v14 Notes
 
 - **Session cookies must use `extraHeaders: {Cookie}`** — not `query: {session}`. Foundry v14 rejects query-param sessions (the standard `foundryvtt-mcp` npm package gets this wrong).
 - **`modifyDocument` requires `broadcast: true`** and `userId` fields in the request.
-- **Combat `turn`** is an index into Foundry's computed sort order, not the cached combatants array.
+- **Combat `turn`** is an index into Foundry's computed sort order, not the cached combatants array. The current `next_turn` endpoint remains an internal update and should be replaced by a rule-aware execution path before stable release.
 - **`world` and `modifyDocument`** are internal Socket.IO protocols — point releases may alter payloads.
 - **Array fields in document updates** are replaced wholesale, not merged.
 

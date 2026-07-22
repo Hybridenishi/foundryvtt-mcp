@@ -1,6 +1,14 @@
 const express = require("express");
 const { io: socketIO } = require("socket.io-client");
 const axios = require("axios");
+const {
+  collectionValues,
+  listActorActivities,
+  listActorItems,
+  summarizeActor,
+  validateActor,
+  withoutItems,
+} = require("./actor-utils");
 
 const FOUNDRY_URL = process.env.FOUNDRY_URL || "http://foundry:30000";
 const USERNAME = process.env.FOUNDRY_USERNAME || "mcp-api";
@@ -13,6 +21,26 @@ let socket = null;
 let connected = false;
 let worldData = null;
 let mcpUserId = null;
+
+function isConnected() {
+  return connected && Boolean(socket?.connected);
+}
+
+function foundryVersionFromHtml(html) {
+  const match = typeof html === "string" && html.match(/Version\s+(\d+(?:\.\d+)?(?:\s+Build\s+\d+)?)/i);
+  return match?.[1] ?? null;
+}
+
+function contentRulesFromWorld(world) {
+  const rules = new Set();
+  for (const actor of world?.actors ?? []) {
+    for (const item of collectionValues(actor.items)) {
+      const sourceRules = item?.system?.source?.rules;
+      if (typeof sourceRules === "string" && sourceRules.length > 0) rules.add(sourceRules);
+    }
+  }
+  return [...rules].sort();
+}
 
 // ── 4-Step Auth (proven against Foundry v14) ──────────────────────
 async function getSessionCookie() {
@@ -83,11 +111,15 @@ async function connect() {
         resolve();
       });
     });
+    socket.on("disconnect", (reason) => {
+      connected = false;
+      console.error(`Foundry socket disconnected: ${reason}`);
+    });
   });
 }
 
 function getWorld() {
-  if (!connected || !socket?.connected) throw new Error("Not connected");
+  if (!isConnected()) throw new Error("Not connected");
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("world timeout")), TIMEOUT);
     socket.emit("world", (data) => { clearTimeout(t); worldData = data; resolve(data); });
@@ -100,17 +132,43 @@ app.use(express.json());
 
 app.use((req, res, next) => {
   if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorized" });
-  if (!connected) return res.status(503).json({ error: "Not connected" });
+  if (!isConnected()) return res.status(503).json({ error: "Not connected" });
   next();
 });
 
-app.get("/api/mcp/refresh", (_req, res) => res.json({ ok: true, connected }));
+function refreshResponse(_req, res) {
+  res.json({ ok: true, connected: isConnected(), timestamp: Date.now() });
+}
+
+app.get("/api/mcp/refresh", refreshResponse);
+app.post("/api/mcp/refresh", refreshResponse);
 app.get("/api/mcp/world-summary", async (_req, res) => {
   try { const w = await getWorld(); res.json({ actors: w.actors?.length||0, scenes: w.scenes?.length||0, items: w.items?.length||0, users: w.users?.length||0 }); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/mcp/system-info", async (_req, res) => {
-  try { const w = await getWorld(); res.json({ modules: w.modules?.map(m=>({id:m._id||m.id,name:m.name,active:m.active}))||[] }); }
+  try {
+    const [w, systemManifest, joinPage] = await Promise.all([
+      getWorld(),
+      axios.get(`${FOUNDRY_URL}/systems/dnd5e/system.json`, { timeout: TIMEOUT }).catch(() => ({ data: null })),
+      axios.get(`${FOUNDRY_URL}/join`, { timeout: TIMEOUT }).catch(() => ({ data: null })),
+    ]);
+    res.json({
+      foundryVersion: foundryVersionFromHtml(joinPage.data),
+      system: {
+        id: systemManifest.data?.id ?? "dnd5e",
+        title: systemManifest.data?.title ?? null,
+        version: systemManifest.data?.version ?? null,
+      },
+      contentRules: contentRulesFromWorld(w),
+      modules: w.modules?.map(m => ({
+        id: m._id || m.id,
+        name: m.name ?? m.title ?? null,
+        version: m.version ?? null,
+        active: m.active,
+      })) || [],
+    });
+  }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -120,8 +178,49 @@ app.get("/api/mcp/actors", async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/mcp/actors/:id", async (req, res) => {
-  try { const w = await getWorld(); const a = w.actors?.find(x=>x._id===req.params.id); if(!a) return res.status(404).json({error:"Not found"}); res.json(a); }
+  try {
+    const w = await getWorld();
+    const a = w.actors?.find(x => x._id === req.params.id);
+    if (!a) return res.status(404).json({ error: "Not found" });
+    res.json(req.query.includeItems === "true" ? a : withoutItems(a));
+  }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/mcp/actors/:id/5e-summary", async (req, res) => {
+  try {
+    const w = await getWorld();
+    const actor = w.actors?.find(x => x._id === req.params.id);
+    if (!actor) return res.status(404).json({ error: "Not found" });
+    res.json(summarizeActor(actor));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/mcp/actors/:id/items", async (req, res) => {
+  try {
+    const w = await getWorld();
+    const actor = w.actors?.find(x => x._id === req.params.id);
+    if (!actor) return res.status(404).json({ error: "Not found" });
+    res.json(listActorItems(actor, req.query));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/mcp/actors/:id/activities", async (req, res) => {
+  try {
+    const w = await getWorld();
+    const actor = w.actors?.find(x => x._id === req.params.id);
+    if (!actor) return res.status(404).json({ error: "Not found" });
+    res.json(listActorActivities(actor, req.query));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/mcp/actors/:id/5e-validation", async (req, res) => {
+  try {
+    const w = await getWorld();
+    const actor = w.actors?.find(x => x._id === req.params.id);
+    if (!actor) return res.status(404).json({ error: "Not found" });
+    res.json(validateActor(actor));
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Items
@@ -129,11 +228,37 @@ app.get("/api/mcp/items", async (req, res) => {
   try { const w = await getWorld(); let items = w.items||[]; const q = req.query.query?.toLowerCase(); if(q) items=items.filter(x=>(x.name||"").toLowerCase().includes(q)); if(req.query.type) items=items.filter(x=>x.type===req.query.type); res.json(items.slice(0,Math.min(+req.query.limit||20,100)).map(x=>({_id:x._id,name:x.name,type:x.type}))); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+app.get("/api/mcp/items/:id", async (req, res) => {
+  try {
+    const w = await getWorld();
+    const item = w.items?.find(x => x._id === req.params.id);
+    if (!item) return res.status(404).json({ error: "Not found" });
+    res.json(item);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // Scenes
 app.get("/api/mcp/scenes", async (_req, res) => {
   try { const w = await getWorld(); res.json((w.scenes||[]).map(s=>({_id:s._id,name:s.name,active:s.active,tokenCount:(s.tokens||[]).length}))); }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/mcp/scenes/:id/tokens", async (req, res) => {
+  try {
+    const w = await getWorld();
+    const scene = w.scenes?.find(s => s._id === req.params.id);
+    if (!scene) return res.status(404).json({ error: "Not found" });
+    res.json(collectionValues(scene.tokens).map(t => ({
+      _id: t._id,
+      name: t.name,
+      actorId: t.actorId ?? t.actor?.id ?? null,
+      x: t.x,
+      y: t.y,
+      hidden: t.hidden,
+      disposition: t.disposition,
+      elevation: t.elevation,
+      vision: t.vision,
+    })));
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Combat
@@ -163,6 +288,23 @@ app.post("/api/mcp/chat", async (req, res) => {
 app.get("/api/mcp/journal", async (req, res) => {
   try { const w = await getWorld(); let e=w.journal||[]; if(req.query.query){const q=req.query.query.toLowerCase();e=e.filter(j=>(j.name||"").toLowerCase().includes(q)||(j.pages||[]).some(p=>(p.text?.content||"").toLowerCase().includes(q)));} res.json(e.slice(0,Math.min(+req.query.limit||20,100)).map(j=>({_id:j._id,name:j.name}))); }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/mcp/journal/:id", async (req, res) => {
+  try {
+    const w = await getWorld();
+    const entry = w.journal?.find(j => j._id === req.params.id);
+    if (!entry) return res.status(404).json({ error: "Not found" });
+    res.json({
+      _id: entry._id,
+      name: entry.name,
+      pages: collectionValues(entry.pages).map(page => ({
+        _id: page._id,
+        name: page.name,
+        type: page.type,
+        content: page.text?.content ?? "",
+      })),
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Users

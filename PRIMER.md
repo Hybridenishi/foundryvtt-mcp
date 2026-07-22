@@ -39,13 +39,13 @@ Two-layer bridge:
 
 **Build:** `npm install && npm run build` (outputs to `dist/`)
 **Deploy MCP server:** copy `dist/` to `~/.hermes/mcp-servers/foundryvtt/dist/`
-**Deploy sidecar:** scp `sidecar/index.js` to Atomsk, then rebuild Docker container
+**Deploy sidecar:** copy `sidecar/index.js` and `sidecar/actor-utils.js` to Atomsk, then rebuild Docker container
 
 ## How to Test Against Atomsk
 
 ### Quick connectivity test
 ```bash
-# Sidecar health (GET only — POST /refresh doesn't exist on sidecar)
+# Sidecar health (both GET and POST are supported)
 curl -s -H "X-API-Key: mcp-bridge-key-2026" \
   http://100.100.244.3:30001/api/mcp/refresh
 # → {"ok":true,"connected":true}
@@ -60,28 +60,35 @@ curl -s -H "X-API-Key: mcp-bridge-key-2026" \
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/mcp/refresh` | Health check |
+| POST | `/api/mcp/refresh` | Refresh current world snapshot |
 | GET | `/api/mcp/world-summary` | Actor/scene/item counts |
-| GET | `/api/mcp/system-info` | Modules, version |
+| GET | `/api/mcp/system-info` | Foundry/system metadata, content rules sources, modules |
 | GET | `/api/mcp/actors` | List actors (?query, ?type, ?limit) |
-| GET | `/api/mcp/actors/:id` | Single actor |
+| GET | `/api/mcp/actors/:id` | Raw actor without Items by default (`?includeItems=true` for debugging) |
+| GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
+| GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
+| GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
+| GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
 | POST | `/api/mcp/actors/create` | Create actor `{name, type?, system?}` |
 | POST | `/api/mcp/actors/:id/update` | Update `{system: {...}}` |
 | POST | `/api/mcp/actors/:id/delete` | Delete actor |
 | GET | `/api/mcp/items` | List items |
+| GET | `/api/mcp/items/:id` | Single world-level item |
 | GET | `/api/mcp/scenes` | List scenes |
+| GET | `/api/mcp/scenes/:id/tokens` | Tokens on a scene |
 | GET | `/api/mcp/combats/active` | Combat state |
 | POST | `/api/mcp/combats/next-turn` | Advance combat |
-| POST | `/api/mcp/combats/set-initiative` | Set initiative |
 | GET | `/api/mcp/chat-log` | Chat messages |
 | POST | `/api/mcp/chat` | Post to chat `{content, type?}` |
 | GET | `/api/mcp/journal` | Journal entries |
+| GET | `/api/mcp/journal/:id` | One journal entry with pages |
 | GET | `/api/mcp/users` | User list |
 
 ### Deploy sidecar changes
 ```bash
-# 1. Edit sidecar/index.js locally
-# 2. Copy to Atomsk
-scp sidecar/index.js atomsk:/mnt/user/appdata/compose/foundry-sidecar/index.js
+# 1. Edit sidecar files locally
+# 2. Copy both runtime files to Atomsk
+scp sidecar/index.js sidecar/actor-utils.js atomsk:/mnt/user/appdata/compose/foundry-sidecar/
 
 # 3. Rebuild + restart
 ssh atomsk "cd /mnt/user/appdata/compose/foundry-stack && \

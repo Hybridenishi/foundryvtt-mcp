@@ -39,7 +39,7 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   server.registerTool(
     "create_actor",
     {
-      description: "Create a new actor (NPC or character) with full system data. Requires FOUNDRY_WRITE_ENABLED=true.",
+      description: "Create a minimal actor placeholder. Use Plutonium for complete 5e characters and creatures. Requires FOUNDRY_WRITE_ENABLED=true.",
       inputSchema: {
         name: z.string().min(1),
         type: z.string().optional(),
@@ -73,25 +73,9 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   );
 
   server.registerTool(
-    "set_initiative",
-    {
-      description: "Set a combatant's initiative in the active combat. Requires FOUNDRY_WRITE_ENABLED=true.",
-      inputSchema: { combatantId: z.string().min(1), value: z.number().finite() },
-      annotations: { destructiveHint: false },
-    },
-    async ({ combatantId, value }) => {
-      if (!writeEnabled) return disabledResult();
-      try {
-        const res = await http.post("/api/mcp/combats/set-initiative", { combatantId, value });
-        return textResult(res.data);
-      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
-    },
-  );
-
-  server.registerTool(
     "next_turn",
     {
-      description: "Advance combat to the next turn (fires hooks, effects, and sounds). Requires FOUNDRY_WRITE_ENABLED=true.",
+      description: "Advance combat through the sidecar's current internal update. Requires FOUNDRY_WRITE_ENABLED=true.",
       inputSchema: { combatId: z.string().optional() },
       annotations: { destructiveHint: false },
     },

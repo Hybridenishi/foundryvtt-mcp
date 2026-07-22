@@ -28,7 +28,7 @@ export class FoundryClient {
     // Verify the module is running
     const response = await this.http.get("/api/mcp/refresh");
     if (response.data?.ok !== true) {
-      throw new Error("MCP Bridge module not responding. Is it activated in Foundry?");
+      throw new Error("Foundry sidecar is not responding. Is it connected to Foundry?");
     }
 
     // Load world data via individual endpoints
