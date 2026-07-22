@@ -2,6 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { FoundryClient } from "./client.js";
 import { logger } from "./logger.js";
+import { registerDiceTool } from "./tools/dice.js";
+import { registerReadTools } from "./tools/read.js";
+import { registerWriteTools } from "./tools/write.js";
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -27,6 +30,9 @@ async function main(): Promise<void> {
     { description: "Confirm that the Foundry VTT MCP server is available." },
     async () => ({ content: [{ type: "text", text: "pong" }] }),
   );
+  registerReadTools(server, client);
+  registerDiceTool(server);
+  registerWriteTools(server, client, writeEnabled);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

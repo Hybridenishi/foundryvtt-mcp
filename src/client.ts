@@ -57,6 +57,15 @@ export class FoundryClient {
     return this.worldData;
   }
 
+  /**
+   * Returns the authenticated Socket.IO connection for Foundry operations that
+   * are not represented in the cached world data (for example, document edits).
+   */
+  exposeSocket(): Socket {
+    if (!this.socket?.connected) throw new Error("Foundry is not connected");
+    return this.socket;
+  }
+
   async refreshWorldData(): Promise<WorldData> {
     if (!this.socket?.connected) throw new Error("Foundry is not connected");
     await this.loadWorldData(this.socket, false);
