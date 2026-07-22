@@ -15,8 +15,7 @@ function requiredEnvironment(name: string): string {
 async function main(): Promise<void> {
   const client = new FoundryClient({
     baseUrl: requiredEnvironment("FOUNDRY_URL"),
-    username: requiredEnvironment("FOUNDRY_USERNAME"),
-    password: requiredEnvironment("FOUNDRY_PASSWORD"),
+    apiKey: process.env.FOUNDRY_API_KEY ?? "mcp-bridge-key-2026",
   });
   const writeEnabled = process.env.FOUNDRY_WRITE_ENABLED === "true";
   await client.connect();
@@ -36,7 +35,7 @@ async function main(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logger.info("Foundry VTT MCP server ready", { writeEnabled });
+  logger.info("Foundry VTT MCP server ready (HTTP bridge mode)", { writeEnabled });
 }
 
 main().catch((error: unknown) => {
