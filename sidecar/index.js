@@ -12,6 +12,7 @@ const TIMEOUT = 30_000;
 let socket = null;
 let connected = false;
 let worldData = null;
+let mcpUserId = null;
 
 // ── 4-Step Auth (proven against Foundry v14) ──────────────────────
 async function getSessionCookie() {
@@ -62,6 +63,7 @@ async function connect() {
   const userId = await resolveUserId(session);
   await authenticate(session, userId);
   console.log(`Authenticated as ${USERNAME} (${userId})`);
+  mcpUserId = userId;
 
   socket = socketIO(FOUNDRY_URL, {
     transports: ["websocket"],
@@ -147,7 +149,13 @@ app.get("/api/mcp/chat-log", async (req, res) => {
 });
 app.post("/api/mcp/chat", async (req, res) => {
   if(!req.body?.content) return res.status(400).json({error:"Requires content"});
-  try { socket.emit("modifyDocument",{type:"ChatMessage",action:"create",operation:{data:[{content:req.body.content,type:req.body.type||1}]}},(r)=>{res.json({ok:true,result:r})}); }
+  try {
+    const msgType = parseInt(req.body.type) || 1;
+    socket.emit("modifyDocument",{
+      type:"ChatMessage",action:"create",
+      operation:{data:[{content:req.body.content,type:msgType,author:mcpUserId}]}
+    },(r)=>{res.json({ok:true,result:r})});
+  }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -170,6 +178,32 @@ app.post("/api/mcp/actors/:id/update", async (req, res) => {
     const updates = { _id: req.params.id };
     for (const [k,v] of Object.entries(req.body.system)) updates[`system.${k}`] = v;
     socket.emit("modifyDocument",{type:"Actor",action:"update",operation:{updates:[updates],diff:true,recursive:true}},(r)=>{res.json({ok:true,result:r})});
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Write — actor create
+app.post("/api/mcp/actors/create", async (req, res) => {
+  const { name, type, system } = req.body;
+  if (!name) return res.status(400).json({ error: "Requires name" });
+  try {
+    const data = { name, type: type || "npc" };
+    if (system) data.system = system;
+    socket.emit("modifyDocument", {
+      type: "Actor",
+      action: "create",
+      operation: { data: [data] }
+    }, (r) => { res.json({ ok: true, actorId: r?.[0]?._id || r?._id, result: r }); });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Write — actor delete
+app.post("/api/mcp/actors/:id/delete", async (req, res) => {
+  try {
+    socket.emit("modifyDocument", {
+      type: "Actor",
+      action: "delete",
+      operation: { ids: [req.params.id] }
+    }, (r) => { res.json({ ok: true, deletedId: req.params.id, result: r }); });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

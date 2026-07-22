@@ -37,6 +37,42 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   );
 
   server.registerTool(
+    "create_actor",
+    {
+      description: "Create a new actor (NPC or character) with full system data. Requires FOUNDRY_WRITE_ENABLED=true.",
+      inputSchema: {
+        name: z.string().min(1),
+        type: z.string().optional(),
+        system: z.record(z.string(), z.unknown()).optional(),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ name, type, system }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post("/api/mcp/actors/create", { name, type, system });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "delete_actor",
+    {
+      description: "Delete an actor by ID. Requires FOUNDRY_WRITE_ENABLED=true. Destructive — cannot be undone.",
+      inputSchema: { actorId: z.string().min(1) },
+      annotations: { destructiveHint: true },
+    },
+    async ({ actorId }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/delete`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "set_initiative",
     {
       description: "Set a combatant's initiative in the active combat. Requires FOUNDRY_WRITE_ENABLED=true.",
