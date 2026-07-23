@@ -1,21 +1,20 @@
-# Foundry MCP — Developer Primer
+# Foundry MCP — Developer Reference
 
 ## Architecture
 
 ```
-Hermes → MCP Server (TS/stdio) → HTTP → Sidecar (Express:30001) → Socket.IO → Foundry:30000
-  │                                      │
-  │  ~/.hermes/mcp-servers/foundryvtt/   │  Docker on Atomsk
-  │  TypeScript, MCP SDK                 │  Node.js Express
-  └──────────────────────────────────────┘
+MCP client → MCP Server (TS/stdio) → HTTP → Sidecar (Express:30001) → Socket.IO → Foundry:30000
+                    │                                      │
+                    │  TypeScript, MCP SDK                 │  Node.js Express
+                    └──────────────────────────────────────┘
 ```
 
 Two-layer bridge:
 
 | Layer | Location | Repo | Role |
 |-------|----------|------|------|
-| **MCP Server** | `~/.hermes/mcp-servers/foundryvtt/` | `github.com/Hybridenishi/foundryvtt-mcp` `src/` | TypeScript MCP server. Hermes runs it as child process over stdio. Registers tools (`search_actors`, `create_actor`, etc.) and calls the sidecar over HTTP. |
-| **Sidecar** | Atomsk Docker: `foundry-sidecar` (:30001) | Same repo, `sidecar/` | Express proxy. Authenticates with Foundry via Socket.IO (4-step handshake), then exposes REST endpoints. All writes go through `socket.emit("modifyDocument", ...)`. |
+| **MCP Server** | Your MCP client's configured server directory | `src/` | TypeScript MCP server. It runs as a child process over stdio, registers tools (`search_actors`, `create_actor`, etc.), and calls the sidecar over HTTP. |
+| **Sidecar** | Your Foundry host's Docker deployment (`foundry-sidecar`, port 30001 by default) | `sidecar/` | Express proxy. Authenticates with Foundry via Socket.IO (4-step handshake), then exposes REST endpoints. All writes go through `socket.emit("modifyDocument", ...)`. |
 | **MCP Bridge module** | Foundry data: `modules/foundry-mcp-bridge/` | Same repo, `module/` | Runs in an active GM's Foundry browser client and returns prepared, runtime-derived Actor values through the same-origin `/mcp-bridge` HTTP route. Read-only in the initial proof of concept. |
 
 ## Repo: `github.com/Hybridenishi/foundryvtt-mcp`
@@ -37,29 +36,29 @@ Two-layer bridge:
 ├── module/                 # Foundry v14 client-side MCP Bridge module
 │   ├── module.json
 │   └── scripts/prepared-actor-bridge.mjs
-├── traefik/                # Dynamic same-origin route for the GM bridge
+├── traefik/                # Optional Traefik example for the same-origin bridge route
 │   └── foundry-mcp-bridge.yml
 ├── SPEC.md                 # Full implementation plan
 └── AGENTS.md               # Claude/AI instructions
 ```
 
 **Build:** `npm install && npm run build` (outputs to `dist/`)
-**Deploy MCP server:** copy `dist/` to `~/.hermes/mcp-servers/foundryvtt/dist/`
-**Deploy sidecar:** copy `sidecar/index.js`, `sidecar/actor-utils.js`, `sidecar/bridge-auth.js`, and `sidecar/Dockerfile` to Atomsk, then rebuild Docker container
-**Deploy MCP Bridge module:** copy `module/module.json`, `module/scripts/prepared-actor-bridge.mjs`, and `traefik/foundry-mcp-bridge.yml` to Atomsk, then reload Foundry as an active GM
+**Deploy MCP server:** copy `dist/` to the directory configured by your MCP client.
+**Deploy sidecar:** use `npm run deploy:foundry` after setting the documented `FOUNDRY_*` deployment paths.
+**Deploy MCP Bridge module:** the deploy script copies the module files; configure a same-origin `/mcp-bridge` route in your reverse proxy, then reload Foundry as an active GM.
 
-## How to Test Against Atomsk
+## How to Test a Deployment
 
 ### Quick connectivity test
 ```bash
 # Sidecar health (both GET and POST are supported)
 curl -s -H "X-API-Key: <private-sidecar-api-key>" \
-  http://100.100.244.3:30001/api/mcp/refresh
+  http://foundry-sidecar-host:30001/api/mcp/refresh
 # → {"ok":true,"connected":true}
 
 # List actors
 curl -s -H "X-API-Key: <private-sidecar-api-key>" \
-  http://100.100.244.3:30001/api/mcp/actors
+  http://foundry-sidecar-host:30001/api/mcp/actors
 ```
 
 ### Endpoints available on sidecar (:30001)
@@ -94,42 +93,21 @@ curl -s -H "X-API-Key: <private-sidecar-api-key>" \
 | GET | `/api/mcp/journal/:id` | One journal entry with pages |
 | GET | `/api/mcp/users` | User list |
 
-### Deploy sidecar changes
-```bash
-# 1. Edit sidecar files locally
-# 2. Copy sidecar runtime files and Docker build definition to Atomsk
-scp sidecar/index.js sidecar/actor-utils.js sidecar/bridge-auth.js sidecar/Dockerfile root@atomsk:/mnt/user/appdata/compose/foundry-sidecar/
-
-# 3. Rebuild + restart
-ssh root@atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
-  docker compose build foundry-sidecar && \
-  docker compose up -d foundry-sidecar"
-
-# 4. Wait ~12s for auth, then test
-sleep 12 && curl -s -H "X-API-Key: <private-sidecar-api-key>" \
-  http://100.100.244.3:30001/api/mcp/refresh
-```
-
 ### Repeatable deploy and smoke checks
 
-From this repository, use `npm run deploy:atomsk` to back up and copy the sidecar/module runtime files, validate the remote Compose configuration, rebuild only the sidecar, and check its private API from inside the container. It does not print secrets or mutate Foundry world data.
+Set `FOUNDRY_DEPLOY_TARGET`, `FOUNDRY_COMPOSE_DIR`, `FOUNDRY_SIDECAR_DIR`, and `FOUNDRY_MODULE_DIR` for your host, then run `npm run deploy:foundry`. The script backs up and copies the sidecar/module runtime files, validates the remote Compose configuration, rebuilds only the sidecar, and checks its private API from inside the container. It does not print secrets or mutate Foundry world data.
 
-After the deploy, hard-refresh Foundry in an active GM browser session, then run `npm run smoke:atomsk -- --require-bridge`. This second check requires an authenticated GM bridge responder and reports Foundry/system versions plus responder count.
+The `traefik/` directory is an optional example only. Any reverse proxy is suitable if it preserves the Foundry browser session cookie while forwarding the same-origin `/mcp-bridge` route to the sidecar.
 
-### Deploy MCP Bridge module changes
-```bash
-scp module/module.json root@atomsk:/mnt/user/appdata/foundry/Data/modules/foundry-mcp-bridge/
-scp module/scripts/prepared-actor-bridge.mjs root@atomsk:/mnt/user/appdata/foundry/Data/modules/foundry-mcp-bridge/scripts/
-scp traefik/foundry-mcp-bridge.yml root@atomsk:/mnt/user/appdata/traefik/config/dynamic/
-```
+After the deploy, hard-refresh Foundry in an active GM browser session, then run `npm run smoke:foundry -- --require-bridge`. This second check requires an authenticated GM bridge responder and reports Foundry/system versions plus responder count.
 
 Reload Foundry in an active GM browser session after copying the module files. The bridge pairs only after the sidecar validates the browser's authenticated Foundry session as a GM, then uses an in-memory per-client token that expires after 45 seconds of inactivity. No bridge credential belongs in the module source. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
 
-The HP preview route is read-only. The apply route requires both `FOUNDRY_WRITE_ENABLED=true` in Hermes and the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP, but does not calculate typed damage or resistance, vulnerability, immunity, or activity automation.
+The HP preview route is read-only. The apply route requires both `FOUNDRY_WRITE_ENABLED=true` in the MCP client environment and the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP, but does not calculate typed damage or resistance, vulnerability, immunity, or activity automation.
 
 **Important:** The sidecar uses Docker build cache. If your changes don't seem to take effect, use `--no-cache`:
 ```bash
-ssh root@atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
+ssh user@foundry-host "cd /path/to/compose-directory && \
   docker compose build --no-cache foundry-sidecar && \
   docker compose up -d foundry-sidecar"
 ```
@@ -238,7 +216,7 @@ Key paths: `@abilities.str.mod`, `@attributes.hp.value`, `@details.level`, `@pro
 
 ## Plutonium
 
-Installed at `/mnt/user/appdata/foundry/Data/modules/plutonium` but **not activated** in the Azora world. Integrates with 5e.tools dataset for importing properly-structured monsters, items, spells, etc.
+When installed and activated, Plutonium integrates with the 5e.tools dataset for importing properly structured monsters, items, spells, and other content.
 
 If activated, it provides a massive library of correct D&D 5e data — the best source for creating NPCs with proper system data. Import via Foundry UI or programmatically.
 
@@ -250,7 +228,7 @@ Docs: https://wiki.tercept.net/en/Plutonium
 #!/bin/bash
 # Quick create → verify → delete cycle
 
-API="http://100.100.244.3:30001"
+API="http://foundry-sidecar-host:30001"
 KEY="X-API-Key: <private-sidecar-api-key>"
 
 # Create

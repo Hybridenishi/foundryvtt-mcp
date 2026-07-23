@@ -2,7 +2,7 @@
 
 ## Objective
 
-Build a small, dependable personal MCP server for one supported environment:
+Build a small, dependable MCP server for one supported environment:
 
 - Foundry Virtual Tabletop v14 Build 365
 - The official `dnd5e` game system v5.3.3
@@ -14,7 +14,7 @@ This project will not attempt to become a system-neutral Foundry integration. Fo
 
 Start with **a deployed-baseline and contract milestone**, not new 5e write tools.
 
-The local MCP server currently advertises operations that the checked-in sidecar does not implement. Until the local source is reconciled with the working homeserver deployment, it is difficult to tell whether a failure is caused by transport, a missing route, an outdated local file, or incorrect 5e data.
+The local MCP server currently advertises operations that the checked-in sidecar does not implement. Until the local source is reconciled with the working reference deployment, it is difficult to tell whether a failure is caused by transport, a missing route, an outdated local file, or incorrect 5e data.
 
 The baseline inspection has established the Foundry and `dnd5e` versions, live route surface, installed bridge-module source, and representative character schemas. The first implementation milestone should now:
 
@@ -27,9 +27,9 @@ The sidecar API key and Foundry service-account password are supplied only throu
 
 Once that baseline is trustworthy, add 5e-aware reads before 5e-aware writes.
 
-## Live Baseline Snapshot (2026-07-22)
+## Representative Baseline Snapshot (2026-07-22)
 
-The homeserver sidecar at port 30001 was inspected with read-only requests. No world mutations were performed.
+A representative sidecar deployment at port 30001 was inspected with read-only requests. No world mutations were performed.
 
 ### Connection and world summary
 
@@ -46,12 +46,12 @@ The three NPCs are minimal and contain no embedded Items. The four imported play
 
 | Character | Full payload | Embedded Items | Notable activity types | 2014 Items | 2024 Items |
 |---|---:|---:|---|---:|---:|
-| Yuka Arnaaluk | ~646 KiB | 112 | attack, damage, enchant, heal, save, transform, utility | 82 | 29 |
-| Mortala | ~2.43 MiB | 380 | attack, cast, damage, DDB macro, enchant, heal, save, summon, transform, utility | 236 | 143 |
-| Exodus | ~360 KiB | 66 | attack, check, damage, enchant, heal, save, summon, utility | 52 | 13 |
-| Jackie Daytona | ~293 KiB | 54 | attack, damage, heal, save, utility | 15 | 38 |
+| Character A | ~646 KiB | 112 | attack, damage, enchant, heal, save, transform, utility | 82 | 29 |
+| Character B | ~2.43 MiB | 380 | attack, cast, damage, DDB macro, enchant, heal, save, summon, transform, utility | 236 | 143 |
+| Character C | ~360 KiB | 66 | attack, check, damage, enchant, heal, save, summon, utility | 52 | 13 |
+| Character D | ~293 KiB | 54 | attack, damage, heal, save, utility | 15 | 38 |
 
-Each character also has one Item whose rules source is blank. Across the four sheets there are 612 embedded Items. Mortala alone has 343 embedded spells, so returning full Actor documents by default will consume excessive MCP context. The first 5e read adapter should provide summaries and paginated/filterable Item and Activity listings.
+Each character also has one Item whose rules source is blank. Across the four sheets there are 612 embedded Items. The largest sheet alone has 343 embedded spells, so returning full Actor documents by default will consume excessive MCP context. The first 5e read adapter should provide summaries and paginated/filterable Item and Activity listings.
 
 The live data confirms that `system.activities` is an object keyed by activity ID, not an array, and that Item activities include fields added by Midi-QOL and DDB Importer. Adapters should preserve unknown activity fields and normalize only the subset needed for tool responses.
 
@@ -94,7 +94,7 @@ The live world reports `foundry-mcp-bridge` 1.0.0 as active. Its manifest points
 
 However, direct checks against those routes on Foundry port 30000 return 404. The module is marked active but its REST API is not registered; the sidecar on port 30001 is the component currently serving working requests. The likely reason is that normal Foundry module JavaScript runs in a client context where an Express application is not a supported public API.
 
-The module also hardcodes the test API key in `api.js`. Because module JavaScript is served as a static asset, the credential can be retrieved without authenticating to the MCP API. This is accepted only for the current disposable test environment. Before a stable or production-like deployment, rotate the key, remove it from committed/served source, and supply it only to the server-side sidecar through environment configuration.
+The original module prototype hardcoded a test API key in `api.js`. Because module JavaScript is served as a static asset, the credential could be retrieved without authenticating to the MCP API. v1.4.0 replaces that design with authenticated GM-session pairing and a short-lived per-client token.
 
 Several rule- and automation-sensitive 5e modules are also active, including:
 
@@ -229,7 +229,7 @@ Macro execution also needs special treatment: a macro can mutate nearly anything
 
 ### Phase 0 - Capture the working deployment
 
-**Goal:** Establish the homeserver as the known-good reference.
+**Goal:** Establish a known-good reference deployment.
 
 - [x] Record the deployed Foundry and `dnd5e` versions.
 - [ ] Record the deployed Node, sidecar build, and MCP build versions.
@@ -266,7 +266,7 @@ Macro execution also needs special treatment: a macro can mutate nearly anything
 
 **Exit criteria:** Build and tests pass; every registered MCP tool has a matching, tested implementation.
 
-**Current progress:** The local contract includes `POST /refresh`, world Item detail, scene-token detail, and journal-entry detail. Unimplemented compendium and macro tools, plus the unverified initiative write, were removed from the MCP surface. The sidecar was deployed and rebuilt on Atomsk on 2026-07-22; its health check connected successfully to Foundry v14 / dnd5e 5.3.3 and its system-info route reported the active module list and content-rule sources.
+**Current progress:** The local contract includes `POST /refresh`, world Item detail, scene-token detail, and journal-entry detail. Unimplemented compendium and macro tools, plus the unverified initiative write, were removed from the MCP surface. A reference deployment health check connected successfully to Foundry v14 / dnd5e 5.3.3 and its system-info route reported the active module list and content-rule sources.
 
 ### Phase 2 - Add a read-only D&D 5e adapter
 
@@ -287,7 +287,7 @@ Macro execution also needs special treatment: a macro can mutate nearly anything
 
 **Exit criteria:** Hermes can accurately inspect a character or NPC and discover its usable activities without knowing raw Foundry paths.
 
-**Current progress:** Implementations provide `get_5e_actor_summary`, `list_actor_items`, `list_item_activities`, and `validate_5e_actor`. Embedded Items and Activities are paginated, source-rule provenance is retained, and the validator warns about large documents and custom Activity types. The deployed routes were verified against Exodus, Jackie Daytona, Mortala, and Yuka Arnaaluk on 2026-07-22. Mortala has 380 Items / 462 Activities; all four characters contain a mix of 2014 and 2024 Items. After the MacBook Air Hermes process was reloaded, all four 5e reads were confirmed end-to-end for Yuka, including the separate utility and damage Activities embedded in the 2014 Absorb Elements Item. Natural-language auditing also confirmed that the Socket.IO world payload exposes unprepared source data: fields such as AC, HP maximum, character level, ability modifiers, and spell slots may be null even when Foundry can derive them at runtime. Foundry UI screenshots verified that Mortala is correctly prepared at runtime (level 15, HP 78/108, AC 15, proficiency +5, 18/18 prepared spells, and slots through level 8). The MCP must describe raw nulls as unavailable source fields, not claim that in-game behavior is broken; accurate prepared data requires an in-world bridge.
+**Current progress:** Implementations provide `get_5e_actor_summary`, `list_actor_items`, `list_item_activities`, and `validate_5e_actor`. Embedded Items and Activities are paginated, source-rule provenance is retained, and the validator warns about large documents and custom Activity types. Representative imported characters confirmed that large sheets can contain hundreds of Items and Activities, with mixed 2014 and 2024 sources. Natural-language acceptance testing confirmed that the MCP client selects `search_actors` and `get_prepared_5e_actor_summary` directly. The Socket.IO world payload exposes unprepared source data: fields such as AC, HP maximum, character level, ability modifiers, and spell slots may be null even when Foundry can derive them at runtime. Accurate prepared data requires an active in-world bridge.
 
 ### Phase 3 - Prove the rule-aware execution path
 
@@ -309,7 +309,7 @@ Evaluate reliability, the need for an active Foundry client, permissions, result
 
 **Exit criteria:** The project records a clear architectural decision before implementing additional rule-aware mutations.
 
-**Current progress:** The initial module Socket.IO responder was proved non-viable because its client-to-client events do not reach the headless sidecar. The prepared-Actor bridge instead uses a same-origin HTTPS `/mcp-bridge` long-poll route through Traefik. v1.4.0 pairs only after the sidecar validates the browser's authenticated Foundry GM session, then issues a short-lived per-client in-memory token; no browser-served credential is used. It was live-validated on 2026-07-23 with an active GM browser: the sidecar obtained Mortala's prepared level 15, HP 78/108, AC 15, ability modifiers, and spell-slot maxima (4/3/3/3/2/1/1/1). After Hermes reloaded its MCP registry, a natural-language acceptance test directly selected `search_actors` and `get_prepared_5e_actor_summary`, with no terminal fallback. When no GM browser is active, the tool returns an explicit bridge-unavailable error and never falls back to raw snapshot data.
+**Current progress:** The initial module Socket.IO responder was proved non-viable because its client-to-client events do not reach the headless sidecar. The prepared-Actor bridge instead uses a same-origin HTTPS `/mcp-bridge` long-poll route through a reverse proxy. v1.4.0 pairs only after the sidecar validates the browser's authenticated Foundry GM session, then issues a short-lived per-client in-memory token; no browser-served credential is used. Live validation confirmed correct prepared combat values from an active GM browser. When no GM browser is active, the tool returns an explicit bridge-unavailable error and never falls back to raw snapshot data.
 
 ### Phase 4 - Add safe 5e mutations
 
@@ -373,7 +373,7 @@ Keep the generic `update_actor` escape hatch disabled by default.
 
 **Exit criteria:** An upgrade can be deployed and verified without manual guesswork.
 
-**Current progress:** v1.4.0 is published as a stable module release. The sidecar and module use private environment-managed service credentials, while an active GM bridge pairs through its authenticated Foundry session and receives only a short-lived in-memory token. `scripts/deploy-atomsk.sh` backs up and deploys the checked-in runtime files, validates Compose, rebuilds the sidecar, and performs a read-only health smoke check. After a GM hard refresh, `scripts/smoke-atomsk.sh --require-bridge` verifies the active bridge responder without reading credentials or changing world data.
+**Current progress:** v1.4.0 is published as a stable module release. The sidecar and module use private environment-managed service credentials, while an active GM bridge pairs through its authenticated Foundry session and receives only a short-lived in-memory token. `scripts/deploy-foundry.sh` backs up and deploys the checked-in runtime files, validates Compose, rebuilds the sidecar, and performs a read-only health smoke check. After a GM hard refresh, `scripts/smoke-foundry.sh --require-bridge` verifies the active bridge responder without reading credentials or changing world data.
 
 ## Recommended First Tool Set
 

@@ -1,16 +1,16 @@
 # Foundry VTT MCP Server
 
-Personal MCP server connecting [Hermes Agent](https://github.com/NousResearch/hermes-agent) to Foundry VTT v14. Built for personal use — tracks our live Foundry version.
+Focused MCP server connecting an MCP-compatible agent to Foundry VTT v14 and D&D 5e.
 
 ## Architecture
 
 ```
 Hermes → MCP Server (stdio) → Sidecar (REST :30001) → Foundry (Socket.IO :30000)
                                                ↕
-                    Traefik /mcp-bridge ↔ MCP Bridge module (active GM client)
+              Same-origin reverse proxy /mcp-bridge ↔ MCP Bridge module (active GM client)
 ```
 
-The **sidecar** runs alongside Foundry on Atomsk and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route. It also performs confirmation-guarded direct HP changes through the dnd5e Actor API.
+The **sidecar** runs alongside Foundry and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route. It also performs confirmation-guarded direct HP changes through the dnd5e Actor API.
 
 **Auth method:** a private API key (`X-API-Key` header) between Hermes and the sidecar. The GM browser bridge does not use that key.
 
@@ -22,16 +22,16 @@ npm run build
 npm start
 ```
 
-### Hermes Config
+### MCP client configuration
 
 ```yaml
-# ~/.hermes/config.yaml
+# Configure these environment values in your MCP client.
 mcp_servers:
   foundryvtt:
     command: "node"
     args: ["~/.hermes/mcp-servers/foundryvtt/dist/index.js"]
     env:
-      FOUNDRY_URL: "http://100.100.244.3:30001"
+      FOUNDRY_URL: "http://foundry-sidecar-host:30001"
       FOUNDRY_API_KEY: "<private-sidecar-api-key>"
       FOUNDRY_WRITE_ENABLED: "true"
     connect_timeout: 30
@@ -95,13 +95,12 @@ The sidecar is a small Node.js Express server that runs in Docker alongside Foun
 2. Exposes REST endpoints that proxy to Foundry's Socket.IO protocol
 3. Auto-restarts on failure (Docker `restart: unless-stopped`)
 
-**Key files on Atomsk:**
-- `/mnt/user/appdata/compose/foundry-sidecar/index.js` — sidecar server
-- `/mnt/user/appdata/compose/foundry-sidecar/actor-utils.js` — 5e actor summaries, listings, and validation
-- `/mnt/user/appdata/compose/foundry-sidecar/Dockerfile` — sidecar image definition
-- `/mnt/user/appdata/compose/foundry-stack/docker-compose.yml` — compose config
-- `/mnt/user/appdata/foundry/Data/modules/foundry-mcp-bridge/` — active-GM prepared-data bridge module
-- `/mnt/user/appdata/traefik/config/dynamic/foundry-mcp-bridge.yml` — same-origin HTTPS route from Foundry to the sidecar
+**Deployment components:**
+- `sidecar/` — Dockerized sidecar server
+- `module/` — active-GM prepared-data bridge module
+- `traefik/foundry-mcp-bridge.yml` — an optional Traefik example for the same-origin bridge route
+
+Any reverse proxy may be used. It must route the Foundry origin's `/mcp-bridge` path to the sidecar while preserving the browser's Foundry session cookie.
 
 **Environment:**
 ```
@@ -144,19 +143,29 @@ API_KEY=<private-sidecar-api-key>
 | GET | `/api/mcp/journal/:id` | One entry |
 | GET | `/api/mcp/users` | All users |
 
-## Deploy and verify Atomsk
+## Deploy and verify a Foundry host
 
-The deployment scripts copy only the checked-in sidecar, bridge-module, and Traefik route files. They back up every replaced remote file with a timestamp, validate Docker Compose, rebuild only `foundry-sidecar`, and never print credentials.
+The deployment scripts copy only the checked-in sidecar and bridge-module files. They back up every replaced remote file with a timestamp, validate Docker Compose, rebuild only `foundry-sidecar`, and never print credentials. Set the deployment paths for your host first:
+
+```bash
+export FOUNDRY_DEPLOY_TARGET="user@foundry-host"
+export FOUNDRY_COMPOSE_DIR="/path/to/compose-directory"
+export FOUNDRY_SIDECAR_DIR="/path/to/sidecar-directory"
+export FOUNDRY_MODULE_DIR="/path/to/foundry/Data/modules/foundry-mcp-bridge"
+
+# Optional: copy the included Traefik example. Omit for another reverse proxy.
+export FOUNDRY_PROXY_CONFIG_DIR="/path/to/traefik/dynamic-config"
+```
 
 ```bash
 # Sidecar health and Foundry connection only; safe before a GM refresh.
-npm run deploy:atomsk
+npm run deploy:foundry
 
 # After hard-refreshing Foundry in an active GM browser session.
-npm run smoke:atomsk -- --require-bridge
+npm run smoke:foundry -- --require-bridge
 ```
 
-Set `FOUNDRY_DEPLOY_TARGET=user@host` to use another SSH target. The smoke script uses the sidecar container's private API key internally, reports Foundry/system versions plus responder count, and does not mutate world data.
+The smoke script uses the sidecar container's private API key internally, reports Foundry/system versions plus responder count, and does not mutate world data.
 
 ## Foundry v14 Notes
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-target="${FOUNDRY_DEPLOY_TARGET:-root@atomsk}"
+target="${FOUNDRY_DEPLOY_TARGET:?Set FOUNDRY_DEPLOY_TARGET=user@host}"
 require_bridge=false
 
 while (($#)); do
   case "$1" in
     --target) target="$2"; shift 2 ;;
     --require-bridge) require_bridge=true; shift ;;
-    *) echo "Usage: $0 [--target user@host] [--require-bridge]" >&2; exit 64 ;;
+    *) echo "Usage: FOUNDRY_DEPLOY_TARGET=user@host $0 [--target user@host] [--require-bridge]" >&2; exit 64 ;;
   esac
 done
 
@@ -34,11 +34,11 @@ if (!response.ok) process.exit(1);
 if (requireBridge && responders.length === 0) process.exit(2);
 NODE
   then
-    echo "Atomsk smoke check passed."
+    echo "Foundry sidecar smoke check passed."
     exit 0
   fi
   sleep 3
 done
 
-echo "Atomsk smoke check failed. Inspect the sidecar logs; credentials were not printed." >&2
+echo "Foundry sidecar smoke check failed. Inspect the sidecar logs; credentials were not printed." >&2
 exit 1
