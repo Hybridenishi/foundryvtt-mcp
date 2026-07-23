@@ -14,7 +14,7 @@ const {
 
 const FOUNDRY_URL = process.env.FOUNDRY_URL || "http://foundry:30000";
 const USERNAME = process.env.FOUNDRY_USERNAME || "mcp-api";
-const PASSWORD = process.env.FOUNDRY_PASSWORD || "password-for-hermes";
+const PASSWORD = process.env.FOUNDRY_PASSWORD;
 const API_KEY = process.env.API_KEY;
 const PORT = parseInt(process.env.PORT || "30001", 10);
 const TIMEOUT = 30_000;
@@ -26,6 +26,7 @@ const GM_ROLE = 4;
 const HP_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
 
 if (!API_KEY) throw new Error("API_KEY must be set for the sidecar API.");
+if (!PASSWORD) throw new Error("FOUNDRY_PASSWORD must be set for the sidecar account.");
 
 let socket = null;
 let connected = false;

@@ -53,12 +53,12 @@ Two-layer bridge:
 ### Quick connectivity test
 ```bash
 # Sidecar health (both GET and POST are supported)
-curl -s -H "X-API-Key: mcp-bridge-key-2026" \
+curl -s -H "X-API-Key: <private-sidecar-api-key>" \
   http://100.100.244.3:30001/api/mcp/refresh
 # → {"ok":true,"connected":true}
 
 # List actors
-curl -s -H "X-API-Key: mcp-bridge-key-2026" \
+curl -s -H "X-API-Key: <private-sidecar-api-key>" \
   http://100.100.244.3:30001/api/mcp/actors
 ```
 
@@ -106,7 +106,7 @@ ssh root@atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
   docker compose up -d foundry-sidecar"
 
 # 4. Wait ~12s for auth, then test
-sleep 12 && curl -s -H "X-API-Key: mcp-bridge-key-2026" \
+sleep 12 && curl -s -H "X-API-Key: <private-sidecar-api-key>" \
   http://100.100.244.3:30001/api/mcp/refresh
 ```
 
@@ -245,7 +245,7 @@ Docs: https://wiki.tercept.net/en/Plutonium
 # Quick create → verify → delete cycle
 
 API="http://100.100.244.3:30001"
-KEY="X-API-Key: mcp-bridge-key-2026"
+KEY="X-API-Key: <private-sidecar-api-key>"
 
 # Create
 RESULT=$(curl -s -H "$KEY" -H "Content-Type: application/json" \

@@ -107,7 +107,7 @@ The sidecar is a small Node.js Express server that runs in Docker alongside Foun
 ```
 FOUNDRY_URL=http://foundry:30000   # Docker service name
 FOUNDRY_USERNAME=mcp-api
-FOUNDRY_PASSWORD=password-for-hermes
+FOUNDRY_PASSWORD=<private-foundry-account-password>
 PORT=30001
 API_KEY=<private-sidecar-api-key>
 ```
