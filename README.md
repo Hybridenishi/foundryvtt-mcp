@@ -45,11 +45,11 @@ mcp_servers:
 | `world_summary` | Actor/scene/item/combat/user counts |
 | `system_info` | Foundry version, `dnd5e` version, content rules sources, active modules |
 | `search_actors` | Search actors by name + optional type filter |
-| `get_actor` | Raw actor data for debugging; embedded Items are opt-in |
-| `get_5e_actor_summary` | Concise 5e HP, AC, abilities, spell slots, Item/activity counts, and rules mix |
+| `get_actor` | Raw, unprepared actor data for debugging; embedded Items are opt-in |
+| `get_5e_actor_summary` | Concise raw 5e snapshot; derived fields may require Foundry UI confirmation |
 | `list_actor_items` | Paginated embedded Item list, filterable by name, type, and 2014/2024 source |
 | `list_item_activities` | Paginated embedded Activity list, filterable by Item, name, type, and rules source |
-| `validate_5e_actor` | Report large documents, rules mix, Item/activity counts, and custom Activity types |
+| `validate_5e_actor` | Report document shape and rules mix; not a combat-readiness check |
 | `search_items` | Search world-level items by name + optional type filter |
 | `get_item` | Full world-level Item document |
 | `get_scenes` | All scenes with activation status |

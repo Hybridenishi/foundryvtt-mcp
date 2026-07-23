@@ -34,7 +34,7 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   server.registerTool(
     "get_actor",
     {
-      description: "Get raw Foundry actor data for debugging. Embedded items are omitted unless includeItems=true; use the 5e summary and item tools for normal play.",
+      description: "Get a raw, unprepared Foundry actor document for debugging. Embedded items are omitted unless includeItems=true. Null derived fields do not prove that Foundry gameplay is broken; use the 5e summary and item tools for normal play.",
       inputSchema: { actorId: z.string().min(1), includeItems: z.boolean().optional() },
     },
     async ({ actorId, includeItems }) => {
@@ -48,7 +48,7 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   server.registerTool(
     "get_5e_actor_summary",
     {
-      description: "Get a concise D&D 5e actor summary: HP, AC, abilities, spell slots, item counts, activity counts, and 2014/2024 source mix.",
+      description: "Get a concise D&D 5e actor summary from a raw world-document snapshot. Derived values such as AC, HP maximum, level, spell slots, and ability modifiers may be null before Foundry prepares the Actor; never infer that combat is broken from those nulls alone.",
       inputSchema: { actorId: z.string().min(1) },
     },
     async ({ actorId }) => {
@@ -105,7 +105,7 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   server.registerTool(
     "validate_5e_actor",
     {
-      description: "Inspect a D&D 5e actor for document size, item/activity counts, 2014/2024 source mix, and module-provided activity types.",
+      description: "Inspect a D&D 5e actor's raw world-document snapshot for document size, item/activity counts, 2014/2024 source mix, and module-provided activity types. This is not a combat-readiness check: null derived fields require Foundry UI or prepared-data confirmation.",
       inputSchema: { actorId: z.string().min(1) },
     },
     async ({ actorId }) => {

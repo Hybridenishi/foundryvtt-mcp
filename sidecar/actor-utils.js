@@ -1,6 +1,12 @@
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
+const RAW_DOCUMENT_PROVENANCE = Object.freeze({
+  source: "Foundry world-document snapshot",
+  prepared: false,
+  interpretation: "Derived dnd5e values may be absent or null in this snapshot. Do not infer that combat, HP, AC, level, spell slots, or ability modifiers are broken; confirm those in Foundry's character sheet or through a prepared-data bridge.",
+});
+
 const CORE_ACTIVITY_TYPES = new Set([
   "attack",
   "cast",
@@ -101,6 +107,7 @@ function summarizeActor(actor) {
   const activities = items.flatMap(itemActivities);
 
   return {
+    dataProvenance: RAW_DOCUMENT_PROVENANCE,
     _id: actor?._id ?? actor?.id ?? null,
     name: actor?.name ?? "Unnamed actor",
     type: actor?.type ?? null,
@@ -269,6 +276,7 @@ function validateActor(actor) {
   }
 
   return {
+    dataProvenance: RAW_DOCUMENT_PROVENANCE,
     actorId: actor?._id ?? actor?.id ?? null,
     name: actor?.name ?? "Unnamed actor",
     type: actor?.type ?? null,
@@ -292,6 +300,7 @@ function withoutItems(actor) {
 
 module.exports = {
   CORE_ACTIVITY_TYPES,
+  RAW_DOCUMENT_PROVENANCE,
   collectionValues,
   itemActivities,
   listActorActivities,

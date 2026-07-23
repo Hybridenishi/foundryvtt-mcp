@@ -48,6 +48,7 @@ test("summarizeActor returns concise combat and inventory metadata", () => {
   const summary = summarizeActor(actor);
   assert.equal(summary.hp.value, 14);
   assert.equal(summary.ac.value, 16);
+  assert.equal(summary.dataProvenance.prepared, false);
   assert.deepEqual(summary.itemCounts, { weapon: 1, spell: 1 });
   assert.deepEqual(summary.rulesSources, { "2014": 1, "2024": 1 });
 });
@@ -69,6 +70,7 @@ test("listActorActivities links an activity to its parent item", () => {
 test("validateActor reports mixed rules sources and custom activity types", () => {
   const result = validateActor(actor);
   assert.equal(result.isDnd5eLike, true);
+  assert.equal(result.dataProvenance.prepared, false);
   assert.equal(result.mixedRulesSources, true);
   assert.equal(result.activityCount, 2);
   assert.deepEqual(result.warnings.find((warning) => warning.code === "custom-activity-types")?.types, ["ddbmacro"]);
