@@ -75,7 +75,9 @@ function dispatchPreparedActorRequests() {
   const request = queuedPreparedActorRequests.shift();
   const poll = client.poll;
   clearBridgePoll(client);
-  poll.res.json({ requestId: request.requestId, actorId: request.actorId });
+  // Preserve the requested bridge operation and its validated payload. Sending
+  // only the actor ID makes the client default every request to a summary.
+  poll.res.json(request);
 }
 
 function requestBridgeOperation(operation) {
