@@ -1,5 +1,6 @@
 const MODULE_ID = "foundry-mcp-bridge";
 export const MODULE_SOCKET = `module.${MODULE_ID}`;
+export const PREPARED_ACTOR_READY = "prepared-actor-bridge-ready";
 export const PREPARED_ACTOR_REQUEST = "prepared-actor-request";
 export const PREPARED_ACTOR_RESPONSE = "prepared-actor-response";
 
@@ -64,9 +65,16 @@ function emitResponse(message) {
 }
 
 function registerPreparedActorBridge() {
+  if (!globalThis.game?.user?.isGM) return;
+
+  emitResponse({
+    type: PREPARED_ACTOR_READY,
+    responderUserId: globalThis.game.user?.id ?? null,
+    readyAt: Date.now(),
+  });
+
   globalThis.game?.socket?.on(MODULE_SOCKET, (message) => {
     if (message?.type !== PREPARED_ACTOR_REQUEST) return;
-    if (!globalThis.game?.user?.isGM) return;
 
     const actor = globalThis.game.actors?.get(message.actorId);
     if (!actor) {

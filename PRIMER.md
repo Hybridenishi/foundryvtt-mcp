@@ -67,7 +67,7 @@ curl -s -H "X-API-Key: mcp-bridge-key-2026" \
 | GET | `/api/mcp/refresh` | Health check |
 | POST | `/api/mcp/refresh` | Refresh current world snapshot |
 | GET | `/api/mcp/world-summary` | Actor/scene/item counts |
-| GET | `/api/mcp/system-info` | Foundry/system metadata, content rules sources, modules |
+| GET | `/api/mcp/system-info` | Foundry/system metadata, modules, and prepared-bridge responders |
 | GET | `/api/mcp/actors` | List actors (?query, ?type, ?limit) |
 | GET | `/api/mcp/actors/:id` | Raw actor without Items by default (`?includeItems=true` for debugging) |
 | GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |

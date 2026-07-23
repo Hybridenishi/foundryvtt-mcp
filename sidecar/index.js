@@ -18,6 +18,7 @@ const API_KEY = process.env.API_KEY || "mcp-bridge-key-2026";
 const PORT = parseInt(process.env.PORT || "30001", 10);
 const TIMEOUT = 30_000;
 const PREPARED_ACTOR_SOCKET = "module.foundry-mcp-bridge";
+const PREPARED_ACTOR_READY = "prepared-actor-bridge-ready";
 const PREPARED_ACTOR_REQUEST = "prepared-actor-request";
 const PREPARED_ACTOR_RESPONSE = "prepared-actor-response";
 const PREPARED_ACTOR_TIMEOUT = 8_000;
@@ -27,6 +28,7 @@ let connected = false;
 let worldData = null;
 let mcpUserId = null;
 const pendingPreparedActorRequests = new Map();
+const preparedActorResponders = new Map();
 
 function isConnected() {
   return connected && Boolean(socket?.connected);
@@ -49,6 +51,14 @@ function contentRulesFromWorld(world) {
 }
 
 function settlePreparedActorRequest(message) {
+  if (message?.type === PREPARED_ACTOR_READY && message.responderUserId) {
+    preparedActorResponders.set(message.responderUserId, {
+      userId: message.responderUserId,
+      readyAt: message.readyAt ?? Date.now(),
+    });
+    console.log(`Prepared actor bridge ready from GM client ${message.responderUserId}`);
+    return;
+  }
   if (message?.type !== PREPARED_ACTOR_RESPONSE || !message.requestId) return;
   const pending = pendingPreparedActorRequests.get(message.requestId);
   if (!pending) return;
@@ -205,6 +215,7 @@ app.get("/api/mcp/system-info", async (_req, res) => {
         version: m.version ?? null,
         active: m.active,
       })) || [],
+      preparedActorBridge: { responders: [...preparedActorResponders.values()] },
     });
   }
   catch(e) { res.status(500).json({ error: e.message }); }

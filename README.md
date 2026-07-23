@@ -45,7 +45,7 @@ mcp_servers:
 |---|---|
 | `ping` | Confirm server availability |
 | `world_summary` | Actor/scene/item/combat/user counts |
-| `system_info` | Foundry version, `dnd5e` version, content rules sources, active modules |
+| `system_info` | Foundry/system versions, active modules, and prepared-bridge GM responders |
 | `search_actors` | Search actors by name + optional type filter |
 | `get_actor` | Raw, unprepared actor data for debugging; embedded Items are opt-in |
 | `get_5e_actor_summary` | Concise raw 5e snapshot; derived fields may require Foundry UI confirmation |
@@ -111,7 +111,7 @@ API_KEY=mcp-bridge-key-2026
 | GET | `/api/mcp/refresh` | Health check |
 | POST | `/api/mcp/refresh` | Verify and refresh the current world snapshot |
 | GET | `/api/mcp/world-summary` | Counts |
-| GET | `/api/mcp/system-info` | Foundry/system metadata, content rules sources, modules |
+| GET | `/api/mcp/system-info` | Foundry/system metadata, active modules, and prepared-bridge responders |
 | GET | `/api/mcp/actors` | Search actors |
 | GET | `/api/mcp/actors/:id` | Raw actor without embedded Items by default (`?includeItems=true` for debugging) |
 | GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
