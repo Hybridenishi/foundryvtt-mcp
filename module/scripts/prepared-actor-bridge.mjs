@@ -5,6 +5,7 @@ const BRIDGE_PATH = "/mcp-bridge";
 const BRIDGE_API_KEY = "mcp-bridge-key-2026";
 
 const numberOrNull = (value) => Number.isFinite(value) ? value : null;
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 function summarizeAbilities(abilities = {}) {
   return Object.fromEntries(Object.entries(abilities).map(([key, ability]) => [key, {
@@ -60,6 +61,90 @@ export function summarizePreparedActor(actor) {
   };
 }
 
+function hpValue(value) {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function validateHpChange(request) {
+  const mode = request?.mode;
+  const amount = request?.amount;
+  if (mode !== "damage" && mode !== "healing") {
+    throw new Error("HP change mode must be 'damage' or 'healing'.");
+  }
+  if (!Number.isInteger(amount) || amount < 1 || amount > 100_000) {
+    throw new Error("HP change amount must be an integer between 1 and 100000.");
+  }
+  return { mode, amount };
+}
+
+export function previewHpChange(actor, request) {
+  const { mode, amount } = validateHpChange(request);
+  const hp = actor?.system?.attributes?.hp;
+  if (!hp || !Number.isFinite(hp.value) || !Number.isFinite(hp.max)) {
+    throw new Error("This actor does not have prepared current and maximum HP.");
+  }
+
+  const before = {
+    value: hpValue(hp.value),
+    max: hpValue(hp.max),
+    temp: hpValue(hp.temp),
+    tempmax: hpValue(hp.tempmax),
+  };
+  const tempAbsorbed = mode === "damage" ? Math.min(before.temp, amount) : 0;
+  const hpDelta = mode === "damage" ? -(amount - tempAbsorbed) : amount;
+  const nextValue = clamp(before.value + hpDelta, 0, before.max);
+  const after = {
+    value: nextValue,
+    max: before.max,
+    temp: before.temp - tempAbsorbed,
+    tempmax: before.tempmax,
+  };
+
+  return {
+    actorId: actor.id ?? actor._id ?? null,
+    actorName: actor.name ?? "Unnamed actor",
+    mode,
+    requestedAmount: amount,
+    directHpChange: true,
+    rulesNote: "Direct HP damage/healing uses dnd5e Actor.applyDamage with no damage type; resistance, vulnerability, and immunity are not calculated.",
+    before,
+    after,
+    appliedToTemp: tempAbsorbed,
+    appliedToHp: Math.abs(after.value - before.value),
+    unspentAmount: mode === "damage"
+      ? Math.max(0, amount - tempAbsorbed - before.value)
+      : Math.max(0, before.value + amount - before.max),
+  };
+}
+
+async function applyHpChange(actor, request) {
+  const preview = previewHpChange(actor, request);
+  if (typeof actor.applyDamage !== "function") {
+    throw new Error("The installed dnd5e Actor.applyDamage method is unavailable.");
+  }
+  await actor.applyDamage(request.mode === "damage" ? request.amount : -request.amount);
+  return {
+    ...preview,
+    after: summarizePreparedActor(actor).hp,
+  };
+}
+
+async function handleBridgeRequest(request) {
+  const actor = globalThis.game?.actors?.get(request.actorId);
+  if (!actor) throw new Error(`Actor '${request.actorId}' was not found by the active GM client.`);
+
+  switch (request.type ?? "prepared-actor-summary") {
+    case "prepared-actor-summary":
+      return summarizePreparedActor(actor);
+    case "preview-hp-change":
+      return previewHpChange(actor, request);
+    case "apply-hp-change":
+      return applyHpChange(actor, request);
+    default:
+      throw new Error(`Unsupported MCP Bridge request type '${request.type}'.`);
+  }
+}
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -84,10 +169,12 @@ async function runPreparedActorBridge(clientId) {
       if (!poll.ok) throw new Error(`Bridge poll failed (${poll.status})`);
 
       const request = await poll.json();
-      const actor = globalThis.game?.actors?.get(request.actorId);
-      const response = actor
-        ? { clientId, requestId: request.requestId, summary: summarizePreparedActor(actor) }
-        : { clientId, requestId: request.requestId, error: `Actor '${request.actorId}' was not found by the active GM client.` };
+      let response;
+      try {
+        response = { clientId, requestId: request.requestId, result: await handleBridgeRequest(request) };
+      } catch (error) {
+        response = { clientId, requestId: request.requestId, error: error instanceof Error ? error.message : String(error) };
+      }
       const delivered = await bridgeFetch("/respond", { method: "POST", body: JSON.stringify(response) });
       if (!delivered.ok) throw new Error(`Bridge response failed (${delivered.status})`);
     } catch (error) {

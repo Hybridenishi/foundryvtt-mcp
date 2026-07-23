@@ -10,7 +10,7 @@ Hermes → MCP Server (stdio) → Sidecar (REST :30001) → Foundry (Socket.IO :
                     Traefik /mcp-bridge ↔ MCP Bridge module (active GM client)
 ```
 
-The **sidecar** runs alongside Foundry on Atomsk and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route.
+The **sidecar** runs alongside Foundry on Atomsk and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route. It also performs confirmation-guarded direct HP changes through the dnd5e Actor API.
 
 **Auth method:** API key (`X-API-Key` header, shared secret between MCP server and sidecar).
 
@@ -37,7 +37,7 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (26 total)
+## Tools (28 total)
 
 ### Read and service (20 tools)
 
@@ -70,7 +70,13 @@ mcp_servers:
 |---|---|
 | `roll_dice` | Any formula: `1d20+5`, `4d6kh3`, `d%`, `adv`, `dis` |
 
-### Write (5 tools, gated by `FOUNDRY_WRITE_ENABLED`)
+### HP preview (1 read-only tool)
+
+| Tool | Description |
+|---|---|
+| `preview_hp_change` | Calculate direct damage/healing through the GM bridge and return a short-lived confirmation token; does not change Foundry |
+
+### Write (6 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
 | Tool | Description |
 |---|---|
@@ -79,6 +85,7 @@ mcp_servers:
 | `delete_actor` | Delete an actor by ID |
 | `next_turn` | Advance combat through the sidecar's current internal combat operation |
 | `create_chat_message` | Post to Foundry chat |
+| `apply_hp_change` | Apply an exactly matching, previewed direct HP damage/healing change through dnd5e's `Actor.applyDamage` |
 
 ## Sidecar
 
@@ -117,8 +124,10 @@ API_KEY=mcp-bridge-key-2026
 | GET | `/api/mcp/actors/:id` | Raw actor without embedded Items by default (`?includeItems=true` for debugging) |
 | GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
 | GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e actor summary; requires an active GM client with the bridge module |
+| POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns one-time confirmation token |
+| POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
 
-`/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. Its current key is explicitly a disposable test credential and must not ship in a public release.
+`/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. Its current key is explicitly a disposable test credential. The packaged v1.3.0 module remains a test release; before a stable public release, replace the served hardcoded key with a GM-only setting or another secret-delivery mechanism.
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
@@ -149,3 +158,19 @@ When Foundry updates:
 1. The sidecar may need auth flow adjustments (isolated in `connect()`)
 2. The MCP server usually needs no changes (it just talks HTTP)
 3. If `modifyDocument` payload shape changes, update the `POST` handlers in the sidecar
+
+## Foundry Module Releases
+
+The bridge module has a Foundry-compatible manifest and can be installed or updated from:
+
+`https://github.com/Hybridenishi/foundryvtt-mcp/releases/latest/download/module.json`
+
+Create its release asset after validating the build:
+
+```bash
+npm run package:module
+gh release create v1.3.0 release/foundry-mcp-bridge.zip module/module.json \
+  --title "MCP Bridge v1.3.0" --notes "Prepared actor reads and confirmation-guarded direct HP changes. Test-environment release."
+```
+
+The ZIP contains `module.json` and `scripts/` at its root, as required by Foundry's module installer.

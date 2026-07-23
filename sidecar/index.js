@@ -20,6 +20,7 @@ const TIMEOUT = 30_000;
 const PREPARED_ACTOR_TIMEOUT = 8_000;
 const BRIDGE_POLL_TIMEOUT = 25_000;
 const BRIDGE_CLIENT_TTL = 45_000;
+const HP_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
 
 let socket = null;
 let connected = false;
@@ -28,6 +29,7 @@ let mcpUserId = null;
 const pendingPreparedActorRequests = new Map();
 const preparedActorClients = new Map();
 const queuedPreparedActorRequests = [];
+const hpChangeConfirmations = new Map();
 
 function isConnected() {
   return connected && Boolean(socket?.connected);
@@ -76,7 +78,7 @@ function dispatchPreparedActorRequests() {
   poll.res.json({ requestId: request.requestId, actorId: request.actorId });
 }
 
-function requestPreparedActor(actorId) {
+function requestBridgeOperation(operation) {
   if (!isConnected()) return Promise.reject(new Error("Not connected"));
   if (activePreparedActorClients().length === 0) {
     return Promise.reject(new Error("No active GM prepared-data bridge. Reload Foundry as a GM and keep that browser tab open."));
@@ -90,9 +92,51 @@ function requestPreparedActor(actorId) {
     }, PREPARED_ACTOR_TIMEOUT);
 
     pendingPreparedActorRequests.set(requestId, { resolve, reject, timeout });
-    queuedPreparedActorRequests.push({ requestId, actorId });
+    queuedPreparedActorRequests.push({ requestId, ...operation });
     dispatchPreparedActorRequests();
   });
+}
+
+function requestPreparedActor(actorId) {
+  return requestBridgeOperation({ type: "prepared-actor-summary", actorId });
+}
+
+function parseHpChange(body) {
+  const mode = body?.mode;
+  const amount = body?.amount;
+  if (mode !== "damage" && mode !== "healing") {
+    throw new Error("mode must be 'damage' or 'healing'");
+  }
+  if (!Number.isInteger(amount) || amount < 1 || amount > 100_000) {
+    throw new Error("amount must be an integer between 1 and 100000");
+  }
+  return { mode, amount };
+}
+
+function issueHpChangeConfirmation(actorId, change) {
+  const now = Date.now();
+  for (const [token, confirmation] of hpChangeConfirmations) {
+    if (confirmation.expiresAt <= now) hpChangeConfirmations.delete(token);
+  }
+  const confirmationToken = randomUUID();
+  hpChangeConfirmations.set(confirmationToken, {
+    actorId,
+    ...change,
+    expiresAt: now + HP_CHANGE_CONFIRMATION_TTL,
+  });
+  return { confirmationToken, expiresAt: new Date(now + HP_CHANGE_CONFIRMATION_TTL).toISOString() };
+}
+
+function consumeHpChangeConfirmation(token, actorId, change) {
+  const confirmation = typeof token === "string" ? hpChangeConfirmations.get(token) : null;
+  if (!confirmation || confirmation.expiresAt <= Date.now()) {
+    if (typeof token === "string") hpChangeConfirmations.delete(token);
+    throw new Error("A valid, unexpired HP-change confirmation token is required. Preview the change again.");
+  }
+  if (confirmation.actorId !== actorId || confirmation.mode !== change.mode || confirmation.amount !== change.amount) {
+    throw new Error("The confirmation token does not match this actor and HP change.");
+  }
+  hpChangeConfirmations.delete(token);
 }
 
 // ── 4-Step Auth (proven against Foundry v14) ──────────────────────
@@ -247,7 +291,8 @@ app.post("/mcp-bridge/respond", (req, res) => {
   pendingPreparedActorRequests.delete(requestId);
   if (req.body?.error) pending.reject(new Error(req.body.error));
   else if (req.body?.summary) pending.resolve(req.body.summary);
-  else return res.status(400).json({ error: "A summary or error is required" });
+  else if (Object.hasOwn(req.body ?? {}, "result")) pending.resolve(req.body.result);
+  else return res.status(400).json({ error: "A result or error is required" });
   res.json({ ok: true, requestId });
 });
 
@@ -324,6 +369,35 @@ app.get("/api/mcp/actors/:id/prepared", async (req, res) => {
     res.json(summary);
   } catch(e) {
     res.status(e.message.includes("timed out") ? 504 : 500).json({ error: e.message });
+  }
+});
+
+// Guarded HP changes run inside the active GM client through dnd5e's
+// Actor.applyDamage. Preview is read-only; apply requires the one-time token
+// returned by the matching preview.
+app.post("/api/mcp/actors/:id/hp-change/preview", async (req, res) => {
+  try {
+    const change = parseHpChange(req.body);
+    const preview = await requestBridgeOperation({ type: "preview-hp-change", actorId: req.params.id, ...change });
+    res.json({
+      ...preview,
+      confirmation: issueHpChangeConfirmation(req.params.id, change),
+    });
+  } catch (e) {
+    res.status(e.message.includes("mode") || e.message.includes("amount") ? 400 : 500).json({ error: e.message });
+  }
+});
+
+app.post("/api/mcp/actors/:id/hp-change", async (req, res) => {
+  try {
+    const change = parseHpChange(req.body);
+    consumeHpChangeConfirmation(req.body?.confirmationToken, req.params.id, change);
+    const result = await requestBridgeOperation({ type: "apply-hp-change", actorId: req.params.id, ...change });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
+      : e.message.includes("mode") || e.message.includes("amount") ? 400 : 500;
+    res.status(status).json({ error: e.message });
   }
 });
 

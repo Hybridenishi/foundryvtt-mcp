@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizePreparedActor } from "./prepared-actor-bridge.mjs";
+import { previewHpChange, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
 
 test("summarizePreparedActor preserves client-prepared combat values", () => {
   const summary = summarizePreparedActor({
@@ -23,4 +23,21 @@ test("summarizePreparedActor preserves client-prepared combat values", () => {
   assert.deepEqual(summary.spellSlots.spell1, { value: 3, max: 4, override: null });
   assert.deepEqual(summary.spellSlots.spell8, { value: 1, max: 1, override: null });
   assert.equal(summary.spellSlots.pact, undefined);
+});
+
+test("previewHpChange accounts for temporary HP and caps healing", () => {
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 7, max: 12, temp: 3, tempmax: 0 } } },
+  };
+
+  const damage = previewHpChange(actor, { mode: "damage", amount: 8 });
+  assert.deepEqual(damage.after, { value: 2, max: 12, temp: 0, tempmax: 0 });
+  assert.equal(damage.appliedToTemp, 3);
+  assert.equal(damage.appliedToHp, 5);
+
+  const healing = previewHpChange(actor, { mode: "healing", amount: 10 });
+  assert.deepEqual(healing.after, { value: 12, max: 12, temp: 3, tempmax: 0 });
+  assert.equal(healing.unspentAmount, 5);
 });

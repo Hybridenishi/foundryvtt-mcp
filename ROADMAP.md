@@ -339,6 +339,8 @@ Keep the generic `update_actor` escape hatch disabled by default.
 
 **Exit criteria:** Common combat-state changes work predictably and are covered by live smoke tests.
 
+**Current progress:** A v1.3.0 test implementation adds `preview_hp_change` and confirmation-gated `apply_hp_change`. The preview is read-only and returns a one-time two-minute token scoped to the actor, mode, and amount. Apply is gated by `FOUNDRY_WRITE_ENABLED` and runs via the active GM bridge using dnd5e 5.3.3's `Actor.applyDamage`, so direct damage consumes temporary HP. It intentionally does not model typed damage, resistance, vulnerability, immunity, or activity automation; those remain future activity-level operations. Deployment and a disposable-actor smoke test are pending.
+
 ### Phase 5 - Plutonium handoff and activity workflows
 
 **Goal:** Let Plutonium create complete 5e content, then operate on the imported documents.
