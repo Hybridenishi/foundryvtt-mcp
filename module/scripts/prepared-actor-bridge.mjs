@@ -127,6 +127,97 @@ async function applyHpChange(actor, request) {
   };
 }
 
+function resourceSnapshot(actor, item, activity) {
+  const serialize = (value) => JSON.parse(JSON.stringify(value ?? null));
+  return {
+    activityUses: serialize(activity.uses),
+    itemUses: serialize(item.system?.uses),
+    actorResources: serialize(actor.system?.resources),
+    spellSlots: serialize(actor.system?.spells),
+    activation: serialize(actor.system?.attributes?.activation),
+  };
+}
+
+function changedResources(before, after) {
+  return Object.fromEntries(
+    Object.keys(before).filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+      .map((key) => [key, { before: before[key], after: after[key] }]),
+  );
+}
+
+function resolveUtilityActivity(actor, request) {
+  const itemId = request?.itemId;
+  const activityId = request?.activityId;
+  const item = typeof itemId === "string" ? actor.items?.get(itemId) : null;
+  if (!item) throw new Error(`Item '${itemId}' was not found on actor '${actor.id}'.`);
+
+  const activity = typeof activityId === "string" ? item.system?.activities?.get(activityId) : null;
+  if (!activity) throw new Error(`Activity '${activityId}' was not found on item '${item.name}'.`);
+  if (activity.type !== "utility") {
+    throw new Error("This first activity-execution release only supports dnd5e utility activities.");
+  }
+  if (typeof activity.use !== "function") {
+    throw new Error("The installed dnd5e Activity#use method is unavailable.");
+  }
+  if (activity.target?.template?.type || activity.target?.prompt || activity.target?.affects?.type || activity.target?.affects?.count) {
+    throw new Error("This utility activity cannot run without a target or template selection.");
+  }
+  if (activity.requiresSpellSlot || activity.canScale || activity.requiresConcentration) {
+    throw new Error("This utility activity requires a spell slot, scaling, or concentration choice and cannot run unattended.");
+  }
+  if (!activity.canUse) {
+    throw new Error("dnd5e reports that this utility activity cannot currently be used.");
+  }
+  return { item, activity };
+}
+
+function summarizeUsageResult(results) {
+  return {
+    message: results?.message ? {
+      id: results.message.id ?? null,
+      uuid: results.message.uuid ?? null,
+      title: results.message.title ?? null,
+    } : null,
+    effects: (results?.effects ?? []).map((effect) => ({ id: effect?.id ?? null, uuid: effect?.uuid ?? null, name: effect?.name ?? null })),
+    templates: (results?.templates ?? []).map((template) => ({ id: template?.id ?? null, uuid: template?.uuid ?? null })),
+    dnd5eUpdates: results?.updates ?? null,
+  };
+}
+
+export function previewUtilityActivityUse(actor, request) {
+  const { item, activity } = resolveUtilityActivity(actor, request);
+  return {
+    actorId: actor.id,
+    actorName: actor.name,
+    itemId: item.id,
+    itemName: item.name,
+    activityId: activity.id,
+    activityName: activity.name,
+    operation: "use-utility",
+    options: {},
+    execution: "dnd5e Activity#use({}, { configure: false })",
+    cautions: [
+      "This preview does not execute the activity or calculate its final outcome.",
+      "dnd5e will validate and determine any real resource consumption, effects, and chat output at execution time.",
+    ],
+    observedResources: resourceSnapshot(actor, item, activity),
+  };
+}
+
+export async function executeUtilityActivityUse(actor, request) {
+  const { item, activity } = resolveUtilityActivity(actor, request);
+  const preview = previewUtilityActivityUse(actor, request);
+  const before = resourceSnapshot(actor, item, activity);
+  const results = await activity.use({}, { configure: false });
+  if (!results) throw new Error("dnd5e did not execute the utility activity.");
+  const after = resourceSnapshot(actor, item, activity);
+  return {
+    ...preview,
+    result: summarizeUsageResult(results),
+    observedResourceChanges: changedResources(before, after),
+  };
+}
+
 async function handleBridgeRequest(request) {
   const actor = globalThis.game?.actors?.get(request.actorId);
   if (!actor) throw new Error(`Actor '${request.actorId}' was not found by the active GM client.`);
@@ -138,6 +229,10 @@ async function handleBridgeRequest(request) {
       return previewHpChange(actor, request);
     case "apply-hp-change":
       return applyHpChange(actor, request);
+    case "preview-utility-activity-use":
+      return previewUtilityActivityUse(actor, request);
+    case "use-utility-activity":
+      return executeUtilityActivityUse(actor, request);
     default:
       throw new Error(`Unsupported MCP Bridge request type '${request.type}'.`);
   }
