@@ -60,6 +60,20 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   );
 
   server.registerTool(
+    "get_prepared_5e_actor_summary",
+    {
+      description: "Get authoritative, prepared D&D 5e actor values from an active GM's Foundry client: HP maximum, AC, level, modifiers, saving throws, and spell-slot maxima. This requires the Foundry MCP Bridge module enabled and an active GM browser session.",
+      inputSchema: { actorId: z.string().min(1) },
+    },
+    async ({ actorId }) => {
+      try {
+        const res = await http.get(`/api/mcp/actors/${actorId}/prepared`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "list_actor_items",
     {
       description: "List an actor's embedded D&D 5e items in pages. Filter by name, item type, or source rules edition.",

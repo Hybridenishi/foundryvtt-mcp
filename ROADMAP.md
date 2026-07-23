@@ -295,6 +295,7 @@ Macro execution also needs special treatment: a macro can mutate nearly anything
 
 Implement one end-to-end proof of concept, preferably one of:
 
+- Read prepared Actor data (derived HP, AC, level, modifiers, and slots) through a GM client.
 - Advance combat through `Combat.nextTurn()`.
 - Set initiative through `Combat.setInitiative()`.
 - Execute one Item activity and return its chat/roll result.
@@ -307,6 +308,8 @@ Compare two approaches:
 Evaluate reliability, the need for an active Foundry client, permissions, result reporting, and deployment complexity.
 
 **Exit criteria:** The project records a clear architectural decision before implementing additional rule-aware mutations.
+
+**Current progress:** A local read-only prepared-Actor proof of concept now uses a client-side module Socket.IO responder instead of the inactive `game.express` approach. It exposes a separate route/tool and deliberately requires an active GM Foundry client; deployment and live validation remain pending.
 
 ### Phase 4 - Add safe 5e mutations
 

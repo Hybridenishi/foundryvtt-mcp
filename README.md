@@ -6,9 +6,11 @@ Personal MCP server connecting [Hermes Agent](https://github.com/NousResearch/he
 
 ```
 Hermes → MCP Server (stdio) → Sidecar (REST :30001) → Foundry (Socket.IO :30000)
+                                               ↕
+                             MCP Bridge module (active GM Foundry client)
 ```
 
-The **sidecar** runs alongside Foundry on Atomsk and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns.
+The **sidecar** runs alongside Foundry on Atomsk and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session.
 
 **Auth method:** API key (`X-API-Key` header, shared secret between MCP server and sidecar).
 
@@ -35,9 +37,9 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (25 total)
+## Tools (26 total)
 
-### Read and service (19 tools)
+### Read and service (20 tools)
 
 | Tool | Description |
 |---|---|
@@ -47,6 +49,7 @@ mcp_servers:
 | `search_actors` | Search actors by name + optional type filter |
 | `get_actor` | Raw, unprepared actor data for debugging; embedded Items are opt-in |
 | `get_5e_actor_summary` | Concise raw 5e snapshot; derived fields may require Foundry UI confirmation |
+| `get_prepared_5e_actor_summary` | Prepared 5e values from an active GM Foundry client |
 | `list_actor_items` | Paginated embedded Item list, filterable by name, type, and 2014/2024 source |
 | `list_item_activities` | Paginated embedded Activity list, filterable by Item, name, type, and rules source |
 | `validate_5e_actor` | Report document shape and rules mix; not a combat-readiness check |
@@ -90,6 +93,7 @@ The sidecar is a small Node.js Express server that runs in Docker alongside Foun
 - `/mnt/user/appdata/compose/foundry-sidecar/actor-utils.js` — 5e actor summaries, listings, and validation
 - `/mnt/user/appdata/compose/foundry-sidecar/Dockerfile` — sidecar image definition
 - `/mnt/user/appdata/compose/foundry-stack/docker-compose.yml` — compose config
+- `/mnt/user/appdata/foundry/Data/modules/foundry-mcp-bridge/` — active-GM prepared-data bridge module
 
 **Environment:**
 ```
@@ -111,6 +115,7 @@ API_KEY=mcp-bridge-key-2026
 | GET | `/api/mcp/actors` | Search actors |
 | GET | `/api/mcp/actors/:id` | Raw actor without embedded Items by default (`?includeItems=true` for debugging) |
 | GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
+| GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e actor summary; requires an active GM client with the bridge module |
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |

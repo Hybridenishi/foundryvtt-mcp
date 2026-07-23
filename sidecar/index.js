@@ -1,6 +1,7 @@
 const express = require("express");
 const { io: socketIO } = require("socket.io-client");
 const axios = require("axios");
+const { randomUUID } = require("node:crypto");
 const {
   collectionValues,
   listActorActivities,
@@ -16,11 +17,16 @@ const PASSWORD = process.env.FOUNDRY_PASSWORD || "password-for-hermes";
 const API_KEY = process.env.API_KEY || "mcp-bridge-key-2026";
 const PORT = parseInt(process.env.PORT || "30001", 10);
 const TIMEOUT = 30_000;
+const PREPARED_ACTOR_SOCKET = "module.foundry-mcp-bridge";
+const PREPARED_ACTOR_REQUEST = "prepared-actor-request";
+const PREPARED_ACTOR_RESPONSE = "prepared-actor-response";
+const PREPARED_ACTOR_TIMEOUT = 8_000;
 
 let socket = null;
 let connected = false;
 let worldData = null;
 let mcpUserId = null;
+const pendingPreparedActorRequests = new Map();
 
 function isConnected() {
   return connected && Boolean(socket?.connected);
@@ -40,6 +46,37 @@ function contentRulesFromWorld(world) {
     }
   }
   return [...rules].sort();
+}
+
+function settlePreparedActorRequest(message) {
+  if (message?.type !== PREPARED_ACTOR_RESPONSE || !message.requestId) return;
+  const pending = pendingPreparedActorRequests.get(message.requestId);
+  if (!pending) return;
+
+  clearTimeout(pending.timeout);
+  pendingPreparedActorRequests.delete(message.requestId);
+  if (message.error) pending.reject(new Error(message.error));
+  else pending.resolve(message.summary);
+}
+
+function requestPreparedActor(actorId) {
+  if (!isConnected()) return Promise.reject(new Error("Not connected"));
+
+  return new Promise((resolve, reject) => {
+    const requestId = randomUUID();
+    const timeout = setTimeout(() => {
+      pendingPreparedActorRequests.delete(requestId);
+      reject(new Error("Prepared actor request timed out. Open Foundry as a GM so the bridge module can respond."));
+    }, PREPARED_ACTOR_TIMEOUT);
+
+    pendingPreparedActorRequests.set(requestId, { resolve, reject, timeout });
+    socket.emit(PREPARED_ACTOR_SOCKET, {
+      type: PREPARED_ACTOR_REQUEST,
+      requestId,
+      actorId,
+      requesterUserId: mcpUserId,
+    });
+  });
 }
 
 // ── 4-Step Auth (proven against Foundry v14) ──────────────────────
@@ -98,6 +135,7 @@ async function connect() {
     extraHeaders: { Cookie: `session=${session}` },
     timeout: TIMEOUT,
   });
+  socket.on(PREPARED_ACTOR_SOCKET, settlePreparedActorRequest);
 
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("World load timeout")), TIMEOUT);
@@ -194,6 +232,15 @@ app.get("/api/mcp/actors/:id/5e-summary", async (req, res) => {
     if (!actor) return res.status(404).json({ error: "Not found" });
     res.json(summarizeActor(actor));
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/mcp/actors/:id/prepared", async (req, res) => {
+  try {
+    const summary = await requestPreparedActor(req.params.id);
+    res.json(summary);
+  } catch(e) {
+    res.status(e.message.includes("timed out") ? 504 : 500).json({ error: e.message });
+  }
 });
 
 app.get("/api/mcp/actors/:id/items", async (req, res) => {
