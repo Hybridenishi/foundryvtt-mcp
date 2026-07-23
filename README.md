@@ -194,8 +194,8 @@ Create its release asset after validating the build:
 
 ```bash
 npm run package:module
-gh release create v1.4.0 release/foundry-mcp-bridge.zip module/module.json \
-  --title "MCP Bridge v1.4.0" --notes "GM-session pairing with per-client bridge tokens; prepared actor reads and confirmation-guarded direct HP changes."
+gh release create v1.5.0 release/foundry-mcp-bridge.zip module/module.json \
+  --title "MCP Bridge v1.5.0" --notes "Activity discovery for embedded D&D 5e activities, plus GM-session pairing and confirmation-guarded direct HP changes."
 ```
 
 The ZIP contains `module.json` and `scripts/` at its root, as required by Foundry's module installer.

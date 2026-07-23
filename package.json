@@ -1,6 +1,6 @@
 {
   "name": "foundryvtt-mcp",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "description": "A focused Model Context Protocol (MCP) server for Foundry VTT v14 and D&D 5e over Socket.IO.",
   "main": "dist/index.js",
   "type": "module",
