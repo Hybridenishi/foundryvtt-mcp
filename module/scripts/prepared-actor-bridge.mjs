@@ -67,6 +67,9 @@ function emitResponse(message) {
 function registerPreparedActorBridge() {
   if (!globalThis.game?.user?.isGM) return;
 
+  console.info("MCP Bridge: prepared actor bridge ready", { module: MODULE_ID, userId: globalThis.game.user.id });
+  globalThis.ui?.notifications?.info("MCP Bridge: prepared actor bridge ready");
+
   emitResponse({
     type: PREPARED_ACTOR_READY,
     responderUserId: globalThis.game.user?.id ?? null,
