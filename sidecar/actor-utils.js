@@ -260,6 +260,7 @@ function summarizeActivityDetails(item, activity) {
         value: entry?.value ?? null,
         scaling: entry?.scaling ?? null,
       })),
+      interpretation: "Configuration only. Do not infer whether execution will spend a spell slot or another resource from these fields.",
     },
     attack: attack && {
       ability: attack.ability ?? null,
@@ -277,6 +278,7 @@ function summarizeActivityDetails(item, activity) {
       includeBase: damage.includeBase ?? null,
       parts: summarizeRollParts(damage.parts),
       onSave: damage.onSave ?? null,
+      interpretation: "Configuration only. This discovery response does not calculate a final damage formula or roll result.",
     },
     healing: healing && { parts: summarizeRollParts(healing.parts) },
     effects: collectionValues(activity.effects).map((effect) => ({
@@ -288,6 +290,9 @@ function summarizeActivityDetails(item, activity) {
       supported: false,
       note: "Activity execution is not implemented. This endpoint is discovery-only and does not roll, create chat messages, consume resources, or change Foundry data.",
     },
+    cautions: [
+      "Activity configuration is not execution. Use the dnd5e activity result once activity execution is implemented to determine final resource costs and roll outcomes.",
+    ],
   };
 }
 

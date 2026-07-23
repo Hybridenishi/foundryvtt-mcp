@@ -84,11 +84,14 @@ test("getActorActivity returns concise discovery metadata without execution", ()
   assert.equal(activity.target.count, "1");
   assert.equal(activity.consumption.targets[0].target, "itemUses");
   assert.equal(activity.consumption.spellSlotConfig, false);
+  assert.match(activity.consumption.interpretation, /Do not infer/);
   assert.equal(activity.attack.criticalThreshold, 19);
   assert.deepEqual(activity.damage.parts[0].types, ["slashing"]);
   assert.equal(activity.damage.includeBase, null);
+  assert.match(activity.damage.interpretation, /does not calculate/);
   assert.equal(activity.effects[0].name, "Testing Effect");
   assert.equal(activity.execution.supported, false);
+  assert.match(activity.cautions[0], /not execution/);
   assert.equal(getActorActivity(actor, "weapon-1", "missing"), null);
 });
 
