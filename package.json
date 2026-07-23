@@ -1,14 +1,17 @@
 {
   "name": "foundryvtt-mcp",
-  "version": "1.0.0",
-  "description": "A personal Model Context Protocol (MCP) server that connects [Hermes Agent](https://github.com/NousResearch/hermes-agent) to Foundry VTT v14 over Socket.IO. Built for personal use — tracks our live Foundry version and implements only the tools we need.",
+  "version": "1.5.0",
+  "description": "A focused Model Context Protocol (MCP) server for Foundry VTT v14 and D&D 5e over Socket.IO.",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "test:auth": "node dist/test-auth.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run build && npm --prefix sidecar test && node --test module/scripts/*.test.mjs",
+    "package:module": "mkdir -p release && cd module && zip -r -FS ../release/foundry-mcp-bridge.zip module.json scripts -x 'scripts/*.test.mjs'",
+    "smoke:foundry": "./scripts/smoke-foundry.sh",
+    "deploy:foundry": "./scripts/deploy-foundry.sh"
   },
   "repository": {
     "type": "git",

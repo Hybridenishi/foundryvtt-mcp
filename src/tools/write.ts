@@ -18,6 +18,46 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   const http = client.httpClient;
 
   server.registerTool(
+    "preview_hp_change",
+    {
+      description: "Preview a direct D&D 5e HP damage or healing change through the active GM bridge. This does not modify Foundry and returns a short-lived confirmation token for apply_hp_change. Direct damage respects temporary HP but does not calculate damage types, resistance, vulnerability, or immunity.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        mode: z.enum(["damage", "healing"]),
+        amount: z.number().int().min(1).max(100_000),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, mode, amount }) => {
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/hp-change/preview`, { mode, amount });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "apply_hp_change",
+    {
+      description: "Apply a previously previewed direct D&D 5e HP damage or healing change through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact short-lived confirmation token from preview_hp_change. Damage respects temporary HP but does not calculate damage types, resistance, vulnerability, or immunity.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        mode: z.enum(["damage", "healing"]),
+        amount: z.number().int().min(1).max(100_000),
+        confirmationToken: z.string().uuid(),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ actorId, mode, amount, confirmationToken }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/hp-change`, { mode, amount, confirmationToken });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "update_actor",
     {
       description: "Update an actor's system attributes (e.g., hp, currency, stats). Requires FOUNDRY_WRITE_ENABLED=true.",
@@ -39,7 +79,7 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   server.registerTool(
     "create_actor",
     {
-      description: "Create a new actor (NPC or character) with full system data. Requires FOUNDRY_WRITE_ENABLED=true.",
+      description: "Create a minimal actor placeholder. Use Plutonium for complete 5e characters and creatures. Requires FOUNDRY_WRITE_ENABLED=true.",
       inputSchema: {
         name: z.string().min(1),
         type: z.string().optional(),
@@ -73,25 +113,9 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   );
 
   server.registerTool(
-    "set_initiative",
-    {
-      description: "Set a combatant's initiative in the active combat. Requires FOUNDRY_WRITE_ENABLED=true.",
-      inputSchema: { combatantId: z.string().min(1), value: z.number().finite() },
-      annotations: { destructiveHint: false },
-    },
-    async ({ combatantId, value }) => {
-      if (!writeEnabled) return disabledResult();
-      try {
-        const res = await http.post("/api/mcp/combats/set-initiative", { combatantId, value });
-        return textResult(res.data);
-      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
-    },
-  );
-
-  server.registerTool(
     "next_turn",
     {
-      description: "Advance combat to the next turn (fires hooks, effects, and sounds). Requires FOUNDRY_WRITE_ENABLED=true.",
+      description: "Advance combat through the sidecar's current internal update. Requires FOUNDRY_WRITE_ENABLED=true.",
       inputSchema: { combatId: z.string().optional() },
       annotations: { destructiveHint: false },
     },

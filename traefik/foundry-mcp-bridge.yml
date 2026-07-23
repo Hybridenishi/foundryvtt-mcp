@@ -1,0 +1,15 @@
+http:
+  routers:
+    foundry-mcp-bridge:
+      rule: "Host(`foundry.davisnetwork.xyz`) && PathPrefix(`/mcp-bridge`)"
+      entryPoints:
+        - websecure
+      priority: 100
+      tls:
+        certResolver: cloudflare
+      service: foundry-mcp-bridge
+  services:
+    foundry-mcp-bridge:
+      loadBalancer:
+        servers:
+          - url: "http://foundry-sidecar:30001"

@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { previewHpChange, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
+
+test("bridge source contains no browser-served shared API key", async () => {
+  const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
+  assert.equal(source.includes("mcp-bridge-key-2026"), false);
+  assert.match(source, /X-MCP-Bridge-Token/);
+});
+
+test("summarizePreparedActor preserves client-prepared combat values", () => {
+  const summary = summarizePreparedActor({
+    id: "actor-1",
+    name: "Prepared Hero",
+    type: "character",
+    system: {
+      details: { level: 15 },
+      attributes: { hp: { value: 78, max: 108 }, ac: { value: 15, calc: "default" } },
+      abilities: { wis: { value: 16, mod: 3, save: 8, proficient: 1 } },
+      spells: { spell1: { value: 3, max: 4 }, spell8: { value: 1, max: 1 }, pact: { value: 0, max: 0 } },
+    },
+  });
+
+  assert.equal(summary.dataProvenance.prepared, true);
+  assert.equal(summary.details.level, 15);
+  assert.deepEqual(summary.hp, { value: 78, max: 108, temp: null, tempmax: null });
+  assert.equal(summary.ac.value, 15);
+  assert.equal(summary.abilities.wis.mod, 3);
+  assert.deepEqual(summary.spellSlots.spell1, { value: 3, max: 4, override: null });
+  assert.deepEqual(summary.spellSlots.spell8, { value: 1, max: 1, override: null });
+  assert.equal(summary.spellSlots.pact, undefined);
+});
+
+test("previewHpChange accounts for temporary HP and caps healing", () => {
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 7, max: 12, temp: 3, tempmax: 0 } } },
+  };
+
+  const damage = previewHpChange(actor, { mode: "damage", amount: 8 });
+  assert.deepEqual(damage.after, { value: 2, max: 12, temp: 0, tempmax: 0 });
+  assert.equal(damage.appliedToTemp, 3);
+  assert.equal(damage.appliedToHp, 5);
+
+  const healing = previewHpChange(actor, { mode: "healing", amount: 10 });
+  assert.deepEqual(healing.after, { value: 12, max: 12, temp: 3, tempmax: 0 });
+  assert.equal(healing.unspentAmount, 5);
+});

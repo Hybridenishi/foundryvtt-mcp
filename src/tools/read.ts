@@ -34,12 +34,116 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   server.registerTool(
     "get_actor",
     {
-      description: "Get a Foundry actor with full system data and computed derived stats.",
+      description: "Get a raw, unprepared Foundry actor document for debugging. Embedded items are omitted unless includeItems=true. Null derived fields do not prove that Foundry gameplay is broken; use the 5e summary and item tools for normal play.",
+      inputSchema: { actorId: z.string().min(1), includeItems: z.boolean().optional() },
+    },
+    async ({ actorId, includeItems }) => {
+      try {
+        const res = await http.get(`/api/mcp/actors/${actorId}`, { params: { includeItems } });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "get_5e_actor_summary",
+    {
+      description: "Get a concise D&D 5e actor summary from a raw world-document snapshot. Derived values such as AC, HP maximum, level, spell slots, and ability modifiers may be null before Foundry prepares the Actor; never infer that combat is broken from those nulls alone.",
       inputSchema: { actorId: z.string().min(1) },
     },
     async ({ actorId }) => {
       try {
-        const res = await http.get(`/api/mcp/actors/${actorId}`);
+        const res = await http.get(`/api/mcp/actors/${actorId}/5e-summary`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "get_prepared_5e_actor_summary",
+    {
+      description: "Get authoritative, prepared D&D 5e actor values from an active GM's Foundry client: HP maximum, AC, level, modifiers, saving throws, and spell-slot maxima. This requires the Foundry MCP Bridge module enabled and an active GM browser session.",
+      inputSchema: { actorId: z.string().min(1) },
+    },
+    async ({ actorId }) => {
+      try {
+        const res = await http.get(`/api/mcp/actors/${actorId}/prepared`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "list_actor_items",
+    {
+      description: "List an actor's embedded D&D 5e items in pages. Filter by name, item type, or source rules edition.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        query: z.string().optional(),
+        type: z.string().optional(),
+        rules: z.string().optional(),
+        limit: z.number().int().min(1).max(MAX_LIMIT).optional(),
+        offset: z.number().int().min(0).optional(),
+      },
+    },
+    async ({ actorId, query, type, rules, limit, offset }) => {
+      try {
+        const res = await http.get(`/api/mcp/actors/${actorId}/items`, { params: { query, type, rules, limit, offset } });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "list_item_activities",
+    {
+      description: "List D&D 5e activities on an actor's embedded items in pages. Filter by item, name, activity type, or source rules edition.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        itemId: z.string().optional(),
+        query: z.string().optional(),
+        type: z.string().optional(),
+        rules: z.string().optional(),
+        limit: z.number().int().min(1).max(MAX_LIMIT).optional(),
+        offset: z.number().int().min(0).optional(),
+      },
+    },
+    async ({ actorId, itemId, query, type, rules, limit, offset }) => {
+      try {
+        const res = await http.get(`/api/mcp/actors/${actorId}/activities`, { params: { itemId, query, type, rules, limit, offset } });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "get_item_activity",
+    {
+      description: "Inspect one existing D&D 5e activity on an actor item. Returns targeting, activation, consumption configuration, attack/save, damage/healing, and effect metadata. Discovery only: configuration does not prove final resource costs or roll outcomes, and this tool never rolls, consumes resources, creates chat messages, or changes Foundry data.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        itemId: z.string().min(1),
+        activityId: z.string().min(1),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, itemId, activityId }) => {
+      try {
+        const res = await http.get(`/api/mcp/actors/${actorId}/items/${itemId}/activities/${activityId}`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "validate_5e_actor",
+    {
+      description: "Inspect a D&D 5e actor's raw world-document snapshot for document size, item/activity counts, 2014/2024 source mix, and module-provided activity types. This is not a combat-readiness check: null derived fields require Foundry UI or prepared-data confirmation.",
+      inputSchema: { actorId: z.string().min(1) },
+    },
+    async ({ actorId }) => {
+      try {
+        const res = await http.get(`/api/mcp/actors/${actorId}/5e-validation`);
         return textResult(res.data);
       } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
     },
@@ -164,55 +268,6 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
     },
   );
 
-  // ── COMPENDIUMS ─────────────────────────────────────────────────
-  server.registerTool(
-    "list_compendiums",
-    { description: "List all compendium packs with document counts." },
-    async () => {
-      try {
-        const res = await http.get("/api/mcp/compendiums");
-        return textResult(res.data);
-      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
-    },
-  );
-
-  server.registerTool(
-    "search_compendium",
-    {
-      description: "Search a compendium pack by name prefix (e.g., 'dnd5e.monsters').",
-      inputSchema: { pack: z.string().min(1), query: z.string().min(1), limit: z.number().int().min(1).max(MAX_LIMIT).optional() },
-    },
-    async ({ pack, query, limit }) => {
-      try {
-        const res = await http.get(`/api/mcp/compendiums/${pack}/search`, { params: { query, limit } });
-        return textResult(res.data);
-      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
-    },
-  );
-
-  // ── MACROS ──────────────────────────────────────────────────────
-  server.registerTool(
-    "list_macros",
-    { description: "List all macros with execution permissions." },
-    async () => {
-      try {
-        const res = await http.get("/api/mcp/macros");
-        return textResult(res.data);
-      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
-    },
-  );
-
-  server.registerTool(
-    "execute_macro",
-    { description: "Execute a Foundry macro by ID.", inputSchema: { macroId: z.string().min(1) } },
-    async ({ macroId }) => {
-      try {
-        const res = await http.post(`/api/mcp/macros/${macroId}/execute`);
-        return textResult(res.data);
-      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
-    },
-  );
-
   // ── META ────────────────────────────────────────────────────────
   server.registerTool(
     "world_summary",
@@ -238,7 +293,7 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
 
   server.registerTool(
     "refresh_world",
-    { description: "Verify connectivity to the Foundry MCP Bridge module." },
+    { description: "Verify connectivity to the Foundry sidecar and refresh its live world snapshot." },
     async () => {
       try {
         const res = await http.post("/api/mcp/refresh");

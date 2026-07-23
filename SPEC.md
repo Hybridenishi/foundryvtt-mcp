@@ -1,6 +1,6 @@
 # Foundry VTT MCP Server — Custom Build Spec
 
-> **Goal:** Build a minimal, personal MCP server that lets Hermes interact with Foundry VTT v14 over Socket.IO. No distribution ambitions — tracks our live Foundry version and implements only the tools we use.
+> **Historical design note:** This is the original implementation plan. For current public deployment and security guidance, use `README.md` and `PRIMER.md`.
 
 **Architecture:** Node.js MCP server (stdio transport powered by `@modelcontextprotocol/sdk`) that authenticates with Foundry v14 via a proven 4-step Socket.IO flow, loads world data into memory, and exposes a focused set of read/write/dice tools.
 
@@ -62,18 +62,18 @@ socket.on('session', (data) => {
 
 ### Stdio Transport
 
-The server runs as a child process of Hermes, communicating over stdin/stdout:
+The server runs as a child process of an MCP-compatible client, communicating over stdin/stdout:
 
 ```yaml
-# ~/.hermes/config.yaml
+# Configure the equivalent command and environment in your MCP client.
 mcp_servers:
   foundryvtt:
     command: "node"
-    args: ["~/.hermes/mcp-servers/foundryvtt/dist/index.js"]
+    args: ["/path/to/foundryvtt-mcp/dist/index.js"]
     env:
-      FOUNDRY_URL: "http://100.100.244.3:30000"
+      FOUNDRY_URL: "http://foundry-sidecar-host:30001"
       FOUNDRY_USERNAME: "mcp-api"
-      FOUNDRY_PASSWORD: "password-for-hermes"
+      FOUNDRY_PASSWORD: "<private-foundry-account-password>"
       FOUNDRY_WRITE_ENABLED: "true"
     connect_timeout: 60
 ```
@@ -260,11 +260,11 @@ The plan is designed to be handed off. Each phase is self-contained with clear i
 
 1. **I spec + review** — write the plan (done), review Claude's code against the spec
 2. **Claude builds** — implement tasks sequentially, commit after each
-3. **I verify** — after each phase, I test against the real Foundry server on Atomsk (the only way to prove Socket.IO auth actually works)
+3. **Verify against a real Foundry deployment** — Socket.IO authentication cannot be proven by local mocks alone.
 
 Workflow:
 ```
-Futaba: "Here's Phase 2. The auth module needs these exact headers. Test it against 100.100.244.3:30000."
+Contributor: "Here's Phase 2. The auth module needs these exact headers. Test it against the configured Foundry host."
 Claude:  [implements auth.ts + client.ts]
 Futaba:  [runs integration test against live Foundry] → passes/fails → feeds back
 ```
