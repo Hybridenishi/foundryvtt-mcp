@@ -2,7 +2,7 @@
   "id": "foundry-mcp-bridge",
   "title": "MCP Bridge",
   "description": "Read-only prepared actor data bridge for the Foundry VTT MCP sidecar.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "authors": [{ "name": "Nate" }],
   "compatibility": { "minimum": "14", "verified": "14" },
   "esmodules": ["scripts/prepared-actor-bridge.mjs"]

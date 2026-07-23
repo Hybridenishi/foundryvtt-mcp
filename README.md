@@ -7,10 +7,10 @@ Personal MCP server connecting [Hermes Agent](https://github.com/NousResearch/he
 ```
 Hermes → MCP Server (stdio) → Sidecar (REST :30001) → Foundry (Socket.IO :30000)
                                                ↕
-                             MCP Bridge module (active GM Foundry client)
+                    Traefik /mcp-bridge ↔ MCP Bridge module (active GM client)
 ```
 
-The **sidecar** runs alongside Foundry on Atomsk and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session.
+The **sidecar** runs alongside Foundry on Atomsk and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route.
 
 **Auth method:** API key (`X-API-Key` header, shared secret between MCP server and sidecar).
 
@@ -94,6 +94,7 @@ The sidecar is a small Node.js Express server that runs in Docker alongside Foun
 - `/mnt/user/appdata/compose/foundry-sidecar/Dockerfile` — sidecar image definition
 - `/mnt/user/appdata/compose/foundry-stack/docker-compose.yml` — compose config
 - `/mnt/user/appdata/foundry/Data/modules/foundry-mcp-bridge/` — active-GM prepared-data bridge module
+- `/mnt/user/appdata/traefik/config/dynamic/foundry-mcp-bridge.yml` — same-origin HTTPS route from Foundry to the sidecar
 
 **Environment:**
 ```
@@ -116,6 +117,8 @@ API_KEY=mcp-bridge-key-2026
 | GET | `/api/mcp/actors/:id` | Raw actor without embedded Items by default (`?includeItems=true` for debugging) |
 | GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
 | GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e actor summary; requires an active GM client with the bridge module |
+
+`/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. Its current key is explicitly a disposable test credential and must not ship in a public release.
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |

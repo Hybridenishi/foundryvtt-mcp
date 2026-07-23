@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MODULE_SOCKET, PREPARED_ACTOR_READY, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
-
-test("bridge uses a namespaced socket event and readiness signal", () => {
-  assert.equal(MODULE_SOCKET, "module.foundry-mcp-bridge");
-  assert.equal(PREPARED_ACTOR_READY, "prepared-actor-bridge-ready");
-});
+import { summarizePreparedActor } from "./prepared-actor-bridge.mjs";
 
 test("summarizePreparedActor preserves client-prepared combat values", () => {
   const summary = summarizePreparedActor({

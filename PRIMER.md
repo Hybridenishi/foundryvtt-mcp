@@ -16,7 +16,7 @@ Two-layer bridge:
 |-------|----------|------|------|
 | **MCP Server** | `~/.hermes/mcp-servers/foundryvtt/` | `github.com/Hybridenishi/foundryvtt-mcp` `src/` | TypeScript MCP server. Hermes runs it as child process over stdio. Registers tools (`search_actors`, `create_actor`, etc.) and calls the sidecar over HTTP. |
 | **Sidecar** | Atomsk Docker: `foundry-sidecar` (:30001) | Same repo, `sidecar/` | Express proxy. Authenticates with Foundry via Socket.IO (4-step handshake), then exposes REST endpoints. All writes go through `socket.emit("modifyDocument", ...)`. |
-| **MCP Bridge module** | Foundry data: `modules/foundry-mcp-bridge/` | Same repo, `module/` | Runs in an active GM's Foundry browser client and returns prepared, runtime-derived Actor values over a module Socket.IO channel. Read-only in the initial proof of concept. |
+| **MCP Bridge module** | Foundry data: `modules/foundry-mcp-bridge/` | Same repo, `module/` | Runs in an active GM's Foundry browser client and returns prepared, runtime-derived Actor values through the same-origin `/mcp-bridge` HTTP route. Read-only in the initial proof of concept. |
 
 ## Repo: `github.com/Hybridenishi/foundryvtt-mcp`
 
@@ -37,6 +37,8 @@ Two-layer bridge:
 ├── module/                 # Foundry v14 client-side MCP Bridge module
 │   ├── module.json
 │   └── scripts/prepared-actor-bridge.mjs
+├── traefik/                # Dynamic same-origin route for the GM bridge
+│   └── foundry-mcp-bridge.yml
 ├── SPEC.md                 # Full implementation plan
 └── AGENTS.md               # Claude/AI instructions
 ```
@@ -44,7 +46,7 @@ Two-layer bridge:
 **Build:** `npm install && npm run build` (outputs to `dist/`)
 **Deploy MCP server:** copy `dist/` to `~/.hermes/mcp-servers/foundryvtt/dist/`
 **Deploy sidecar:** copy `sidecar/index.js`, `sidecar/actor-utils.js`, and `sidecar/Dockerfile` to Atomsk, then rebuild Docker container
-**Deploy MCP Bridge module:** copy `module/module.json` and `module/scripts/prepared-actor-bridge.mjs` to Atomsk's `foundry-mcp-bridge` module, then reload Foundry as an active GM
+**Deploy MCP Bridge module:** copy `module/module.json`, `module/scripts/prepared-actor-bridge.mjs`, and `traefik/foundry-mcp-bridge.yml` to Atomsk, then reload Foundry as an active GM
 
 ## How to Test Against Atomsk
 
@@ -110,9 +112,10 @@ sleep 12 && curl -s -H "X-API-Key: mcp-bridge-key-2026" \
 ```bash
 scp module/module.json root@atomsk:/mnt/user/appdata/foundry/Data/modules/foundry-mcp-bridge/
 scp module/scripts/prepared-actor-bridge.mjs root@atomsk:/mnt/user/appdata/foundry/Data/modules/foundry-mcp-bridge/scripts/
+scp traefik/foundry-mcp-bridge.yml root@atomsk:/mnt/user/appdata/traefik/config/dynamic/
 ```
 
-Reload Foundry in an active GM browser session after copying the module files. The prepared-data route times out rather than falling back to raw values when no GM bridge responds.
+Reload Foundry in an active GM browser session after copying the module files. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
 
 **Important:** The sidecar uses Docker build cache. If your changes don't seem to take effect, use `--no-cache`:
 ```bash

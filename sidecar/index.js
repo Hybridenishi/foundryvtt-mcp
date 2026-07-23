@@ -17,18 +17,17 @@ const PASSWORD = process.env.FOUNDRY_PASSWORD || "password-for-hermes";
 const API_KEY = process.env.API_KEY || "mcp-bridge-key-2026";
 const PORT = parseInt(process.env.PORT || "30001", 10);
 const TIMEOUT = 30_000;
-const PREPARED_ACTOR_SOCKET = "module.foundry-mcp-bridge";
-const PREPARED_ACTOR_READY = "prepared-actor-bridge-ready";
-const PREPARED_ACTOR_REQUEST = "prepared-actor-request";
-const PREPARED_ACTOR_RESPONSE = "prepared-actor-response";
 const PREPARED_ACTOR_TIMEOUT = 8_000;
+const BRIDGE_POLL_TIMEOUT = 25_000;
+const BRIDGE_CLIENT_TTL = 45_000;
 
 let socket = null;
 let connected = false;
 let worldData = null;
 let mcpUserId = null;
 const pendingPreparedActorRequests = new Map();
-const preparedActorResponders = new Map();
+const preparedActorClients = new Map();
+const queuedPreparedActorRequests = [];
 
 function isConnected() {
   return connected && Boolean(socket?.connected);
@@ -50,27 +49,38 @@ function contentRulesFromWorld(world) {
   return [...rules].sort();
 }
 
-function settlePreparedActorRequest(message) {
-  if (message?.type === PREPARED_ACTOR_READY && message.responderUserId) {
-    preparedActorResponders.set(message.responderUserId, {
-      userId: message.responderUserId,
-      readyAt: message.readyAt ?? Date.now(),
-    });
-    console.log(`Prepared actor bridge ready from GM client ${message.responderUserId}`);
-    return;
+function activePreparedActorClients() {
+  const cutoff = Date.now() - BRIDGE_CLIENT_TTL;
+  for (const [clientId, client] of preparedActorClients) {
+    if (client.lastSeen < cutoff) {
+      if (client.poll) clearTimeout(client.poll.timeout);
+      preparedActorClients.delete(clientId);
+    }
   }
-  if (message?.type !== PREPARED_ACTOR_RESPONSE || !message.requestId) return;
-  const pending = pendingPreparedActorRequests.get(message.requestId);
-  if (!pending) return;
+  return [...preparedActorClients.values()];
+}
 
-  clearTimeout(pending.timeout);
-  pendingPreparedActorRequests.delete(message.requestId);
-  if (message.error) pending.reject(new Error(message.error));
-  else pending.resolve(message.summary);
+function clearBridgePoll(client) {
+  if (!client?.poll) return;
+  clearTimeout(client.poll.timeout);
+  client.poll = null;
+}
+
+function dispatchPreparedActorRequests() {
+  const client = activePreparedActorClients().find((candidate) => candidate.poll);
+  if (!client || queuedPreparedActorRequests.length === 0) return;
+
+  const request = queuedPreparedActorRequests.shift();
+  const poll = client.poll;
+  clearBridgePoll(client);
+  poll.res.json({ requestId: request.requestId, actorId: request.actorId });
 }
 
 function requestPreparedActor(actorId) {
   if (!isConnected()) return Promise.reject(new Error("Not connected"));
+  if (activePreparedActorClients().length === 0) {
+    return Promise.reject(new Error("No active GM prepared-data bridge. Reload Foundry as a GM and keep that browser tab open."));
+  }
 
   return new Promise((resolve, reject) => {
     const requestId = randomUUID();
@@ -80,12 +90,8 @@ function requestPreparedActor(actorId) {
     }, PREPARED_ACTOR_TIMEOUT);
 
     pendingPreparedActorRequests.set(requestId, { resolve, reject, timeout });
-    socket.emit(PREPARED_ACTOR_SOCKET, {
-      type: PREPARED_ACTOR_REQUEST,
-      requestId,
-      actorId,
-      requesterUserId: mcpUserId,
-    });
+    queuedPreparedActorRequests.push({ requestId, actorId });
+    dispatchPreparedActorRequests();
   });
 }
 
@@ -145,7 +151,6 @@ async function connect() {
     extraHeaders: { Cookie: `session=${session}` },
     timeout: TIMEOUT,
   });
-  socket.on(PREPARED_ACTOR_SOCKET, settlePreparedActorRequest);
 
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("World load timeout")), TIMEOUT);
@@ -177,6 +182,74 @@ function getWorld() {
 // ── Express ────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json());
+
+function bridgeAuthorized(req) {
+  return req.headers["x-mcp-bridge-key"] === API_KEY;
+}
+
+function bridgeClient(req) {
+  const clientId = typeof req.body?.clientId === "string" ? req.body.clientId : req.query?.clientId;
+  if (typeof clientId !== "string" || clientId.length < 8 || clientId.length > 200) return null;
+  return clientId;
+}
+
+// Same-origin HTTPS bridge for an active GM's Foundry browser client. The
+// regular sidecar API middleware below intentionally does not apply here.
+app.post("/mcp-bridge/ready", (req, res) => {
+  if (!bridgeAuthorized(req)) return res.status(401).json({ error: "Unauthorized" });
+  const clientId = bridgeClient(req);
+  if (!clientId) return res.status(400).json({ error: "A clientId is required" });
+
+  const current = preparedActorClients.get(clientId) ?? { clientId, poll: null };
+  current.userId = typeof req.body?.userId === "string" ? req.body.userId : null;
+  current.lastSeen = Date.now();
+  preparedActorClients.set(clientId, current);
+  res.json({ ok: true, clientId });
+});
+
+app.get("/mcp-bridge/poll", (req, res) => {
+  if (!bridgeAuthorized(req)) return res.status(401).json({ error: "Unauthorized" });
+  const clientId = bridgeClient(req);
+  const client = clientId && preparedActorClients.get(clientId);
+  if (!client) return res.status(404).json({ error: "Unknown bridge client; announce readiness first" });
+
+  const current = client;
+  current.lastSeen = Date.now();
+  clearBridgePoll(current);
+  res.set("Cache-Control", "no-store");
+  current.poll = {
+    res,
+    timeout: setTimeout(() => {
+      if (current.poll?.res === res) {
+        current.poll = null;
+        res.status(204).end();
+      }
+    }, BRIDGE_POLL_TIMEOUT),
+  };
+  res.on("close", () => {
+    if (current.poll?.res === res) clearBridgePoll(current);
+  });
+  dispatchPreparedActorRequests();
+});
+
+app.post("/mcp-bridge/respond", (req, res) => {
+  if (!bridgeAuthorized(req)) return res.status(401).json({ error: "Unauthorized" });
+  const clientId = bridgeClient(req);
+  const client = clientId && preparedActorClients.get(clientId);
+  if (!client) return res.status(404).json({ error: "Unknown bridge client" });
+  client.lastSeen = Date.now();
+
+  const requestId = req.body?.requestId;
+  const pending = typeof requestId === "string" && pendingPreparedActorRequests.get(requestId);
+  if (!pending) return res.status(404).json({ error: "Unknown or expired prepared actor request" });
+
+  clearTimeout(pending.timeout);
+  pendingPreparedActorRequests.delete(requestId);
+  if (req.body?.error) pending.reject(new Error(req.body.error));
+  else if (req.body?.summary) pending.resolve(req.body.summary);
+  else return res.status(400).json({ error: "A summary or error is required" });
+  res.json({ ok: true, requestId });
+});
 
 app.use((req, res, next) => {
   if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorized" });
@@ -215,7 +288,7 @@ app.get("/api/mcp/system-info", async (_req, res) => {
         version: m.version ?? null,
         active: m.active,
       })) || [],
-      preparedActorBridge: { responders: [...preparedActorResponders.values()] },
+      preparedActorBridge: { responders: activePreparedActorClients().map(({ clientId, userId, lastSeen }) => ({ clientId, userId, lastSeen })) },
     });
   }
   catch(e) { res.status(500).json({ error: e.message }); }

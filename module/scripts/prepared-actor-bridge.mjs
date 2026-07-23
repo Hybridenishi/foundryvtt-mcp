@@ -1,8 +1,8 @@
 const MODULE_ID = "foundry-mcp-bridge";
-export const MODULE_SOCKET = `module.${MODULE_ID}`;
-export const PREPARED_ACTOR_READY = "prepared-actor-bridge-ready";
-export const PREPARED_ACTOR_REQUEST = "prepared-actor-request";
-export const PREPARED_ACTOR_RESPONSE = "prepared-actor-response";
+const BRIDGE_PATH = "/mcp-bridge";
+// Disposable test-environment credential. A release-ready module must load
+// this from a GM-only setting instead of shipping it in public source.
+const BRIDGE_API_KEY = "mcp-bridge-key-2026";
 
 const numberOrNull = (value) => Number.isFinite(value) ? value : null;
 
@@ -60,42 +60,64 @@ export function summarizePreparedActor(actor) {
   };
 }
 
-function emitResponse(message) {
-  globalThis.game?.socket?.emit(MODULE_SOCKET, message);
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function registerPreparedActorBridge() {
-  if (!globalThis.game?.user?.isGM) return;
-
-  console.info("MCP Bridge: prepared actor bridge ready", { module: MODULE_ID, userId: globalThis.game.user.id });
-  globalThis.ui?.notifications?.info("MCP Bridge: prepared actor bridge ready");
-
-  emitResponse({
-    type: PREPARED_ACTOR_READY,
-    responderUserId: globalThis.game.user?.id ?? null,
-    readyAt: Date.now(),
+async function bridgeFetch(path, options = {}) {
+  return fetch(`${BRIDGE_PATH}${path}`, {
+    ...options,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-MCP-Bridge-Key": BRIDGE_API_KEY,
+      ...(options.headers ?? {}),
+    },
   });
+}
 
-  globalThis.game?.socket?.on(MODULE_SOCKET, (message) => {
-    if (message?.type !== PREPARED_ACTOR_REQUEST) return;
+async function runPreparedActorBridge(clientId) {
+  while (true) {
+    try {
+      const poll = await bridgeFetch(`/poll?clientId=${encodeURIComponent(clientId)}`);
+      if (poll.status === 204) continue;
+      if (!poll.ok) throw new Error(`Bridge poll failed (${poll.status})`);
 
-    const actor = globalThis.game.actors?.get(message.actorId);
-    if (!actor) {
-      emitResponse({
-        type: PREPARED_ACTOR_RESPONSE,
-        requestId: message.requestId,
-        error: `Actor '${message.actorId}' was not found by the active GM client.`,
-      });
-      return;
+      const request = await poll.json();
+      const actor = globalThis.game?.actors?.get(request.actorId);
+      const response = actor
+        ? { clientId, requestId: request.requestId, summary: summarizePreparedActor(actor) }
+        : { clientId, requestId: request.requestId, error: `Actor '${request.actorId}' was not found by the active GM client.` };
+      const delivered = await bridgeFetch("/respond", { method: "POST", body: JSON.stringify(response) });
+      if (!delivered.ok) throw new Error(`Bridge response failed (${delivered.status})`);
+    } catch (error) {
+      console.warn("MCP Bridge: prepared actor bridge reconnecting", error);
+      await delay(3_000);
+      await bridgeFetch("/ready", {
+        method: "POST",
+        body: JSON.stringify({ clientId, userId: globalThis.game?.user?.id ?? null }),
+      }).catch(() => {});
     }
+  }
+}
 
-    emitResponse({
-      type: PREPARED_ACTOR_RESPONSE,
-      requestId: message.requestId,
-      responderUserId: globalThis.game.user.id,
-      summary: summarizePreparedActor(actor),
+async function registerPreparedActorBridge() {
+  if (!globalThis.game?.user?.isGM) return;
+  const clientId = crypto.randomUUID();
+  try {
+    const ready = await bridgeFetch("/ready", {
+      method: "POST",
+      body: JSON.stringify({ clientId, userId: globalThis.game.user.id }),
     });
-  });
+    if (!ready.ok) throw new Error(`unable to announce readiness (${ready.status})`);
+
+    console.info("MCP Bridge: prepared actor HTTP bridge ready", { module: MODULE_ID, userId: globalThis.game.user.id });
+    globalThis.ui?.notifications?.info("MCP Bridge: prepared actor bridge ready");
+    void runPreparedActorBridge(clientId);
+  } catch (error) {
+    console.error("MCP Bridge: prepared actor bridge unavailable", error);
+    globalThis.ui?.notifications?.error("MCP Bridge: prepared actor bridge unavailable");
+  }
 }
 
 if (globalThis.Hooks) globalThis.Hooks.once("ready", registerPreparedActorBridge);

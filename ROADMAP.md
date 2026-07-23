@@ -309,7 +309,7 @@ Evaluate reliability, the need for an active Foundry client, permissions, result
 
 **Exit criteria:** The project records a clear architectural decision before implementing additional rule-aware mutations.
 
-**Current progress:** A local read-only prepared-Actor proof of concept now uses a client-side module Socket.IO responder instead of the inactive `game.express` approach. It exposes a separate route/tool and deliberately requires an active GM Foundry client; deployment and live validation remain pending.
+**Current progress:** The initial module Socket.IO responder was proved non-viable because its client-to-client events do not reach the headless sidecar. The read-only prepared-Actor proof of concept now uses a same-origin HTTPS `/mcp-bridge` long-poll route through Traefik. It exposes a separate route/tool and deliberately requires an active GM Foundry client; deployment and live validation remain pending.
 
 ### Phase 4 - Add safe 5e mutations
 
