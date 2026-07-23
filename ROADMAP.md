@@ -287,7 +287,7 @@ Macro execution also needs special treatment: a macro can mutate nearly anything
 
 **Exit criteria:** Hermes can accurately inspect a character or NPC and discover its usable activities without knowing raw Foundry paths.
 
-**Current progress:** Implementations provide `get_5e_actor_summary`, `list_actor_items`, `list_item_activities`, and `validate_5e_actor`. Embedded Items and Activities are paginated, source-rule provenance is retained, and the validator warns about large documents and custom Activity types. The deployed routes were verified against Exodus, Jackie Daytona, Mortala, and Yuka Arnaaluk on 2026-07-22. Mortala has 380 Items / 462 Activities; all four characters contain a mix of 2014 and 2024 Items.
+**Current progress:** Implementations provide `get_5e_actor_summary`, `list_actor_items`, `list_item_activities`, and `validate_5e_actor`. Embedded Items and Activities are paginated, source-rule provenance is retained, and the validator warns about large documents and custom Activity types. The deployed routes were verified against Exodus, Jackie Daytona, Mortala, and Yuka Arnaaluk on 2026-07-22. Mortala has 380 Items / 462 Activities; all four characters contain a mix of 2014 and 2024 Items. After the MacBook Air Hermes process was reloaded, `get_5e_actor_summary` and `validate_5e_actor` were also confirmed end-to-end through the active MCP integration for Yuka.
 
 ### Phase 3 - Prove the rule-aware execution path
 
