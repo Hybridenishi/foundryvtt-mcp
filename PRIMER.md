@@ -74,6 +74,8 @@ curl -s -H "X-API-Key: mcp-bridge-key-2026" \
 | GET | `/api/mcp/actors/:id` | Raw actor without Items by default (`?includeItems=true` for debugging) |
 | GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
 | GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e summary; requires active GM browser bridge |
+| POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns a short-lived confirmation token |
+| POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
@@ -116,6 +118,8 @@ scp traefik/foundry-mcp-bridge.yml root@atomsk:/mnt/user/appdata/traefik/config/
 ```
 
 Reload Foundry in an active GM browser session after copying the module files. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
+
+The HP preview route is read-only. The apply route requires both `FOUNDRY_WRITE_ENABLED=true` in Hermes and the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP, but does not calculate typed damage or resistance, vulnerability, immunity, or activity automation.
 
 **Important:** The sidecar uses Docker build cache. If your changes don't seem to take effect, use `--no-cache`:
 ```bash
