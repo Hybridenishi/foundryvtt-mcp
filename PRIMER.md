@@ -77,6 +77,7 @@ curl -s -H "X-API-Key: <private-sidecar-api-key>" \
 | POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
+| GET | `/api/mcp/actors/:id/items/:itemId/activities/:activityId` | Discovery-only detail for one embedded Activity |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
 | POST | `/api/mcp/actors/create` | Create actor `{name, type?, system?}` |
 | POST | `/api/mcp/actors/:id/update` | Update `{system: {...}}` |

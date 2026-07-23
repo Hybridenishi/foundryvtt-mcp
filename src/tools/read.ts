@@ -117,6 +117,25 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   );
 
   server.registerTool(
+    "get_item_activity",
+    {
+      description: "Inspect one existing D&D 5e activity on an actor item. Returns targeting, activation, consumption, attack/save, damage/healing, and effect metadata. Discovery only: it does not roll, consume resources, create chat messages, or change Foundry data.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        itemId: z.string().min(1),
+        activityId: z.string().min(1),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, itemId, activityId }) => {
+      try {
+        const res = await http.get(`/api/mcp/actors/${actorId}/items/${itemId}/activities/${activityId}`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "validate_5e_actor",
     {
       description: "Inspect a D&D 5e actor's raw world-document snapshot for document size, item/activity counts, 2014/2024 source mix, and module-provided activity types. This is not a combat-readiness check: null derived fields require Foundry UI or prepared-data confirmation.",

@@ -212,6 +212,91 @@ function summarizeActivity(item, activity) {
   };
 }
 
+function summarizeRollParts(parts) {
+  return collectionValues(parts).map((part) => ({
+    number: numberValue(part?.number),
+    denomination: part?.denomination ?? null,
+    bonus: part?.bonus ?? null,
+    types: collectionValues(part?.types),
+    custom: part?.custom ?? null,
+  }));
+}
+
+function summarizeActivityDetails(item, activity) {
+  const consumption = activity.consumption ?? {};
+  const target = activity.target ?? {};
+  const range = activity.range ?? {};
+  const duration = activity.duration ?? {};
+  const attack = activity.attack ?? null;
+  const save = activity.save ?? null;
+  const damage = activity.damage ?? null;
+  const healing = activity.healing ?? null;
+
+  return {
+    ...summarizeActivity(item, activity),
+    range: {
+      value: range.value ?? null,
+      units: range.units ?? null,
+      special: range.special ?? null,
+    },
+    target: {
+      affects: target.affects ?? null,
+      type: target.template?.type ?? target.type ?? null,
+      value: target.template?.size ?? target.value ?? null,
+      units: target.template?.units ?? target.units ?? null,
+      count: target.affects?.count ?? null,
+      prompt: target.prompt ?? false,
+    },
+    duration: {
+      value: duration.value ?? null,
+      units: duration.units ?? null,
+      special: duration.special ?? null,
+      concentration: duration.concentration ?? false,
+    },
+    consumption: {
+      spellSlot: consumption.spellSlot ?? false,
+      targets: collectionValues(consumption.targets).map((entry) => ({
+        target: entry?.target ?? null,
+        value: entry?.value ?? null,
+        scaling: entry?.scaling ?? null,
+      })),
+    },
+    attack: attack && {
+      ability: attack.ability ?? null,
+      type: attack.type ?? null,
+      bonus: attack.bonus ?? null,
+      criticalThreshold: attack.critical?.threshold ?? null,
+    },
+    save: save && {
+      ability: collectionValues(save.ability),
+      dc: save.dc?.value ?? null,
+      calculation: save.dc?.calculation ?? null,
+      onSave: save.onSave ?? null,
+    },
+    damage: damage && {
+      parts: summarizeRollParts(damage.parts),
+      onSave: damage.onSave ?? null,
+    },
+    healing: healing && { parts: summarizeRollParts(healing.parts) },
+    effects: collectionValues(activity.effects).map((effect) => ({
+      _id: effect?._id ?? effect?.id ?? null,
+      name: effect?.name ?? null,
+      transfer: effect?.transfer ?? null,
+    })),
+    execution: {
+      supported: false,
+      note: "Activity execution is not implemented. This endpoint is discovery-only and does not roll, create chat messages, consume resources, or change Foundry data.",
+    },
+  };
+}
+
+function getActorActivity(actor, itemId, activityId) {
+  const item = actorItems(actor).find((candidate) => (candidate?._id ?? candidate?.id) === itemId);
+  if (!item) return null;
+  const activity = itemActivities(item).find((candidate) => candidate?._id === activityId);
+  return activity ? summarizeActivityDetails(item, activity) : null;
+}
+
 function listActorActivities(actor, query = {}) {
   const nameQuery = stringValue(query.query).toLowerCase();
   const itemId = stringValue(query.itemId);
@@ -303,10 +388,12 @@ module.exports = {
   RAW_DOCUMENT_PROVENANCE,
   collectionValues,
   itemActivities,
+  getActorActivity,
   listActorActivities,
   listActorItems,
   pagination,
   summarizeActor,
+  summarizeActivityDetails,
   validateActor,
   withoutItems,
 };

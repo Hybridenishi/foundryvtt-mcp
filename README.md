@@ -37,9 +37,9 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (28 total)
+## Tools (29 total)
 
-### Read and service (20 tools)
+### Read and service (21 tools)
 
 | Tool | Description |
 |---|---|
@@ -52,6 +52,7 @@ mcp_servers:
 | `get_prepared_5e_actor_summary` | Prepared 5e values from an active GM Foundry client |
 | `list_actor_items` | Paginated embedded Item list, filterable by name, type, and 2014/2024 source |
 | `list_item_activities` | Paginated embedded Activity list, filterable by Item, name, type, and rules source |
+| `get_item_activity` | Discovery-only inspection of one activity's targeting, consumption, rolls, and effects; never executes it |
 | `validate_5e_actor` | Report document shape and rules mix; not a combat-readiness check |
 | `search_items` | Search world-level items by name + optional type filter |
 | `get_item` | Full world-level Item document |
@@ -129,6 +130,7 @@ API_KEY=<private-sidecar-api-key>
 `/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. A GM browser pairs by presenting its existing Foundry session cookie; the sidecar validates that session and issues an in-memory, per-client token that expires when the bridge goes idle. No shared API key is shipped in the module. The separate sidecar API key must be supplied privately through environment configuration and must never be committed.
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
+| GET | `/api/mcp/actors/:id/items/:itemId/activities/:activityId` | Concise discovery-only detail for one embedded Activity |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
 | POST | `/api/mcp/actors/:id/update` | Update actor system |
 | GET | `/api/mcp/items` | Search items |

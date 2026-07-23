@@ -5,6 +5,7 @@ const { randomUUID } = require("node:crypto");
 const { bridgeTokenMatches } = require("./bridge-auth");
 const {
   collectionValues,
+  getActorActivity,
   listActorActivities,
   listActorItems,
   summarizeActor,
@@ -469,6 +470,17 @@ app.get("/api/mcp/actors/:id/activities", async (req, res) => {
     if (!actor) return res.status(404).json({ error: "Not found" });
     res.json(listActorActivities(actor, req.query));
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/mcp/actors/:id/items/:itemId/activities/:activityId", async (req, res) => {
+  try {
+    const w = await getWorld();
+    const actor = w.actors?.find((candidate) => candidate._id === req.params.id);
+    if (!actor) return res.status(404).json({ error: "Actor not found" });
+    const activity = getActorActivity(actor, req.params.itemId, req.params.activityId);
+    if (!activity) return res.status(404).json({ error: "Activity not found on this actor and item" });
+    res.json(activity);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get("/api/mcp/actors/:id/5e-validation", async (req, res) => {
