@@ -86,7 +86,9 @@ The sidecar is a small Node.js Express server that runs in Docker alongside Foun
 3. Auto-restarts on failure (Docker `restart: unless-stopped`)
 
 **Key files on Atomsk:**
-- `/mnt/user/appdata/compose/foundry-sidecar/index.js` — sidecar code
+- `/mnt/user/appdata/compose/foundry-sidecar/index.js` — sidecar server
+- `/mnt/user/appdata/compose/foundry-sidecar/actor-utils.js` — 5e actor summaries, listings, and validation
+- `/mnt/user/appdata/compose/foundry-sidecar/Dockerfile` — sidecar image definition
 - `/mnt/user/appdata/compose/foundry-stack/docker-compose.yml` — compose config
 
 **Environment:**

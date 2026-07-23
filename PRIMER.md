@@ -39,7 +39,7 @@ Two-layer bridge:
 
 **Build:** `npm install && npm run build` (outputs to `dist/`)
 **Deploy MCP server:** copy `dist/` to `~/.hermes/mcp-servers/foundryvtt/dist/`
-**Deploy sidecar:** copy `sidecar/index.js` and `sidecar/actor-utils.js` to Atomsk, then rebuild Docker container
+**Deploy sidecar:** copy `sidecar/index.js`, `sidecar/actor-utils.js`, and `sidecar/Dockerfile` to Atomsk, then rebuild Docker container
 
 ## How to Test Against Atomsk
 
@@ -87,8 +87,8 @@ curl -s -H "X-API-Key: mcp-bridge-key-2026" \
 ### Deploy sidecar changes
 ```bash
 # 1. Edit sidecar files locally
-# 2. Copy both runtime files to Atomsk
-scp sidecar/index.js sidecar/actor-utils.js atomsk:/mnt/user/appdata/compose/foundry-sidecar/
+# 2. Copy sidecar runtime files and Docker build definition to Atomsk
+scp sidecar/index.js sidecar/actor-utils.js sidecar/Dockerfile atomsk:/mnt/user/appdata/compose/foundry-sidecar/
 
 # 3. Rebuild + restart
 ssh atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
