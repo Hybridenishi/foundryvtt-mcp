@@ -9,7 +9,9 @@
     "start": "node dist/index.js",
     "test:auth": "node dist/test-auth.js",
     "test": "npm run build && npm --prefix sidecar test && node --test module/scripts/*.test.mjs",
-    "package:module": "mkdir -p release && cd module && zip -r -FS ../release/foundry-mcp-bridge.zip module.json scripts -x 'scripts/*.test.mjs'"
+    "package:module": "mkdir -p release && cd module && zip -r -FS ../release/foundry-mcp-bridge.zip module.json scripts -x 'scripts/*.test.mjs'",
+    "smoke:atomsk": "./scripts/smoke-atomsk.sh",
+    "deploy:atomsk": "./scripts/deploy-atomsk.sh"
   },
   "repository": {
     "type": "git",

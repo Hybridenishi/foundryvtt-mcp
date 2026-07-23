@@ -110,6 +110,12 @@ sleep 12 && curl -s -H "X-API-Key: <private-sidecar-api-key>" \
   http://100.100.244.3:30001/api/mcp/refresh
 ```
 
+### Repeatable deploy and smoke checks
+
+From this repository, use `npm run deploy:atomsk` to back up and copy the sidecar/module runtime files, validate the remote Compose configuration, rebuild only the sidecar, and check its private API from inside the container. It does not print secrets or mutate Foundry world data.
+
+After the deploy, hard-refresh Foundry in an active GM browser session, then run `npm run smoke:atomsk -- --require-bridge`. This second check requires an authenticated GM bridge responder and reports Foundry/system versions plus responder count.
+
 ### Deploy MCP Bridge module changes
 ```bash
 scp module/module.json root@atomsk:/mnt/user/appdata/foundry/Data/modules/foundry-mcp-bridge/

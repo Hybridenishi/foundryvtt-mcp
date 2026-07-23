@@ -23,7 +23,7 @@ The baseline inspection has established the Foundry and `dnd5e` versions, live r
 3. Add a small automated smoke test that verifies that contract.
 4. Add sanitized, minimal fixtures derived from the imported characters.
 
-The currently exposed API key and password are explicitly treated as disposable **test-environment credentials**. They must be replaced by environment-managed secrets and rotated before any stable or production-like deployment.
+The sidecar API key and Foundry service-account password are supplied only through private environment configuration. The browser bridge uses authenticated GM-session pairing and a short-lived per-client token; no reusable bridge credential is served to Foundry clients.
 
 Once that baseline is trustworthy, add 5e-aware reads before 5e-aware writes.
 
@@ -244,7 +244,7 @@ Macro execution also needs special treatment: a macro can mutate nearly anything
   - One class or monster feature
   - One active combat, if available
 - Store fixtures under a test-only directory with names and private content removed.
-- [deferred] Rotate test credentials and remove the publicly served hardcoded value before the stable release.
+- [done] Rotate the sidecar/service-account credentials, remove browser-served credentials, and publish the v1.4.0 stable release.
 
 **Exit criteria:** The repository contains no unexplained difference from the deployed implementation, and the supported version tuple is documented.
 
@@ -309,7 +309,7 @@ Evaluate reliability, the need for an active Foundry client, permissions, result
 
 **Exit criteria:** The project records a clear architectural decision before implementing additional rule-aware mutations.
 
-**Current progress:** The initial module Socket.IO responder was proved non-viable because its client-to-client events do not reach the headless sidecar. The read-only prepared-Actor bridge instead uses a same-origin HTTPS `/mcp-bridge` long-poll route through Traefik. It was deployed and live-validated on 2026-07-23 with Foundry Bridge module 1.2.0 and an active GM browser: the sidecar obtained Mortala's prepared level 15, HP 78/108, AC 15, ability modifiers, and spell-slot maxima (4/3/3/3/2/1/1/1). After Hermes reloaded its MCP registry, a natural-language acceptance test directly selected `search_actors` and `get_prepared_5e_actor_summary`, with no terminal fallback. When no GM browser is active, the tool returns an explicit bridge-unavailable error and never falls back to raw snapshot data. This confirms the architecture for read-only runtime values, while rule-aware mutations remain intentionally deferred.
+**Current progress:** The initial module Socket.IO responder was proved non-viable because its client-to-client events do not reach the headless sidecar. The prepared-Actor bridge instead uses a same-origin HTTPS `/mcp-bridge` long-poll route through Traefik. v1.4.0 pairs only after the sidecar validates the browser's authenticated Foundry GM session, then issues a short-lived per-client in-memory token; no browser-served credential is used. It was live-validated on 2026-07-23 with an active GM browser: the sidecar obtained Mortala's prepared level 15, HP 78/108, AC 15, ability modifiers, and spell-slot maxima (4/3/3/3/2/1/1/1). After Hermes reloaded its MCP registry, a natural-language acceptance test directly selected `search_actors` and `get_prepared_5e_actor_summary`, with no terminal fallback. When no GM browser is active, the tool returns an explicit bridge-unavailable error and never falls back to raw snapshot data.
 
 ### Phase 4 - Add safe 5e mutations
 
@@ -339,7 +339,7 @@ Keep the generic `update_actor` escape hatch disabled by default.
 
 **Exit criteria:** Common combat-state changes work predictably and are covered by live smoke tests.
 
-**Current progress:** A v1.3.0 test implementation adds `preview_hp_change` and confirmation-gated `apply_hp_change`. The preview is read-only and returns a one-time two-minute token scoped to the actor, mode, and amount. Apply is gated by `FOUNDRY_WRITE_ENABLED` and runs via the active GM bridge using dnd5e 5.3.3's `Actor.applyDamage`, so direct damage consumes temporary HP. It intentionally does not model typed damage, resistance, vulnerability, immunity, or activity automation; those remain future activity-level operations. Deployment and a disposable-actor smoke test are pending.
+**Current progress:** v1.4.0 includes `preview_hp_change` and confirmation-gated `apply_hp_change`. The preview is read-only and returns a one-time two-minute token scoped to the actor, mode, and amount. Apply is gated by `FOUNDRY_WRITE_ENABLED` and runs via the active GM bridge using dnd5e 5.3.3's `Actor.applyDamage`, so direct damage consumes temporary HP. In an isolated test world, disposable-actor checks verified temporary-HP absorption, normal HP damage, healing, prepared readback, and cleanup. It intentionally does not model typed damage, resistance, vulnerability, immunity, or activity automation; those remain future activity-level operations.
 
 ### Phase 5 - Plutonium handoff and activity workflows
 
@@ -363,16 +363,17 @@ Keep the generic `update_actor` escape hatch disabled by default.
 
 **Goal:** Make maintenance after upgrades routine.
 
-- Add a single deployment script or documented deployment command.
-- Add a post-deployment smoke test.
+- Maintain the deployment script and post-deployment smoke test as Foundry/Docker layouts evolve.
 - Log versions, reconnects, mutations, and failures without logging secrets.
 - Add backup guidance before destructive operations.
-- Replace all test credentials with environment-managed secrets, rotate keys/passwords, and remove them from source, documentation examples, served assets, and deployment history where practical.
+- Continue rotating private credentials on the normal secrets-management schedule; never commit them, include them in examples, or serve them to browser clients.
 - Verify that the stable deployment's API is reachable only from the intended network and caller.
 - Update `README.md`, `PRIMER.md`, and `SPEC.md` to describe one current architecture.
 - Document the tested Foundry/`dnd5e` compatibility matrix.
 
 **Exit criteria:** An upgrade can be deployed and verified without manual guesswork.
+
+**Current progress:** v1.4.0 is published as a stable module release. The sidecar and module use private environment-managed service credentials, while an active GM bridge pairs through its authenticated Foundry session and receives only a short-lived in-memory token. `scripts/deploy-atomsk.sh` backs up and deploys the checked-in runtime files, validates Compose, rebuilds the sidecar, and performs a read-only health smoke check. After a GM hard refresh, `scripts/smoke-atomsk.sh --require-bridge` verifies the active bridge responder without reading credentials or changing world data.
 
 ## Recommended First Tool Set
 

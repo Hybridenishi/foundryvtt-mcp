@@ -106,7 +106,7 @@ The sidecar is a small Node.js Express server that runs in Docker alongside Foun
 **Environment:**
 ```
 FOUNDRY_URL=http://foundry:30000   # Docker service name
-FOUNDRY_USERNAME=mcp-api
+FOUNDRY_USERNAME=<foundry-service-account-name>
 FOUNDRY_PASSWORD=<private-foundry-account-password>
 PORT=30001
 API_KEY=<private-sidecar-api-key>
@@ -143,6 +143,20 @@ API_KEY=<private-sidecar-api-key>
 | GET | `/api/mcp/journal` | Search journal |
 | GET | `/api/mcp/journal/:id` | One entry |
 | GET | `/api/mcp/users` | All users |
+
+## Deploy and verify Atomsk
+
+The deployment scripts copy only the checked-in sidecar, bridge-module, and Traefik route files. They back up every replaced remote file with a timestamp, validate Docker Compose, rebuild only `foundry-sidecar`, and never print credentials.
+
+```bash
+# Sidecar health and Foundry connection only; safe before a GM refresh.
+npm run deploy:atomsk
+
+# After hard-refreshing Foundry in an active GM browser session.
+npm run smoke:atomsk -- --require-bridge
+```
+
+Set `FOUNDRY_DEPLOY_TARGET=user@host` to use another SSH target. The smoke script uses the sidecar container's private API key internally, reports Foundry/system versions plus responder count, and does not mutate world data.
 
 ## Foundry v14 Notes
 
