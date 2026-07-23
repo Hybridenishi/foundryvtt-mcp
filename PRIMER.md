@@ -88,10 +88,10 @@ curl -s -H "X-API-Key: mcp-bridge-key-2026" \
 ```bash
 # 1. Edit sidecar files locally
 # 2. Copy sidecar runtime files and Docker build definition to Atomsk
-scp sidecar/index.js sidecar/actor-utils.js sidecar/Dockerfile atomsk:/mnt/user/appdata/compose/foundry-sidecar/
+scp sidecar/index.js sidecar/actor-utils.js sidecar/Dockerfile root@atomsk:/mnt/user/appdata/compose/foundry-sidecar/
 
 # 3. Rebuild + restart
-ssh atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
+ssh root@atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
   docker compose build foundry-sidecar && \
   docker compose up -d foundry-sidecar"
 
@@ -102,7 +102,7 @@ sleep 12 && curl -s -H "X-API-Key: mcp-bridge-key-2026" \
 
 **Important:** The sidecar uses Docker build cache. If your changes don't seem to take effect, use `--no-cache`:
 ```bash
-ssh atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
+ssh root@atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
   docker compose build --no-cache foundry-sidecar && \
   docker compose up -d foundry-sidecar"
 ```

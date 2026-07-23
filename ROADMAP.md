@@ -266,7 +266,7 @@ Macro execution also needs special treatment: a macro can mutate nearly anything
 
 **Exit criteria:** Build and tests pass; every registered MCP tool has a matching, tested implementation.
 
-**Current progress:** The local contract now includes `POST /refresh`, world Item detail, scene-token detail, and journal-entry detail. Unimplemented compendium and macro tools, plus the unverified initiative write, were removed from the MCP surface. The route helpers have focused unit coverage; deployment to the sidecar remains required before live route verification.
+**Current progress:** The local contract includes `POST /refresh`, world Item detail, scene-token detail, and journal-entry detail. Unimplemented compendium and macro tools, plus the unverified initiative write, were removed from the MCP surface. The sidecar was deployed and rebuilt on Atomsk on 2026-07-22; its health check connected successfully to Foundry v14 / dnd5e 5.3.3 and its system-info route reported the active module list and content-rule sources.
 
 ### Phase 2 - Add a read-only D&D 5e adapter
 
@@ -287,7 +287,7 @@ Macro execution also needs special treatment: a macro can mutate nearly anything
 
 **Exit criteria:** Hermes can accurately inspect a character or NPC and discover its usable activities without knowing raw Foundry paths.
 
-**Current progress:** Local implementations now provide `get_5e_actor_summary`, `list_actor_items`, `list_item_activities`, and `validate_5e_actor`. Embedded Items and Activities are paginated, source-rule provenance is retained, and the validator warns about large documents and custom Activity types.
+**Current progress:** Implementations provide `get_5e_actor_summary`, `list_actor_items`, `list_item_activities`, and `validate_5e_actor`. Embedded Items and Activities are paginated, source-rule provenance is retained, and the validator warns about large documents and custom Activity types. The deployed routes were verified against Exodus, Jackie Daytona, Mortala, and Yuka Arnaaluk on 2026-07-22. Mortala has 380 Items / 462 Activities; all four characters contain a mix of 2014 and 2024 Items.
 
 ### Phase 3 - Prove the rule-aware execution path
 
