@@ -12,7 +12,7 @@ Hermes → MCP Server (stdio) → Sidecar (REST :30001) → Foundry (Socket.IO :
 
 The **sidecar** runs alongside Foundry on Atomsk and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route. It also performs confirmation-guarded direct HP changes through the dnd5e Actor API.
 
-**Auth method:** API key (`X-API-Key` header, shared secret between MCP server and sidecar).
+**Auth method:** a private API key (`X-API-Key` header) between Hermes and the sidecar. The GM browser bridge does not use that key.
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ mcp_servers:
     args: ["~/.hermes/mcp-servers/foundryvtt/dist/index.js"]
     env:
       FOUNDRY_URL: "http://100.100.244.3:30001"
-      FOUNDRY_API_KEY: "mcp-bridge-key-2026"
+      FOUNDRY_API_KEY: "<private-sidecar-api-key>"
       FOUNDRY_WRITE_ENABLED: "true"
     connect_timeout: 30
 ```
@@ -109,7 +109,7 @@ FOUNDRY_URL=http://foundry:30000   # Docker service name
 FOUNDRY_USERNAME=mcp-api
 FOUNDRY_PASSWORD=password-for-hermes
 PORT=30001
-API_KEY=mcp-bridge-key-2026
+API_KEY=<private-sidecar-api-key>
 ```
 
 ## Endpoints (sidecar)
@@ -127,7 +127,7 @@ API_KEY=mcp-bridge-key-2026
 | POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns one-time confirmation token |
 | POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
 
-`/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. Its current key is explicitly a disposable test credential. The packaged v1.3.0 module remains a test release; before a stable public release, replace the served hardcoded key with a GM-only setting or another secret-delivery mechanism.
+`/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. A GM browser pairs by presenting its existing Foundry session cookie; the sidecar validates that session and issues an in-memory, per-client token that expires when the bridge goes idle. No shared API key is shipped in the module. The separate sidecar API key must be supplied privately through environment configuration and must never be committed.
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
@@ -169,8 +169,8 @@ Create its release asset after validating the build:
 
 ```bash
 npm run package:module
-gh release create v1.3.0 release/foundry-mcp-bridge.zip module/module.json \
-  --title "MCP Bridge v1.3.0" --notes "Prepared actor reads and confirmation-guarded direct HP changes. Test-environment release."
+gh release create v1.4.0 release/foundry-mcp-bridge.zip module/module.json \
+  --title "MCP Bridge v1.4.0" --notes "GM-session pairing with per-client bridge tokens; prepared actor reads and confirmation-guarded direct HP changes."
 ```
 
 The ZIP contains `module.json` and `scripts/` at its root, as required by Foundry's module installer.

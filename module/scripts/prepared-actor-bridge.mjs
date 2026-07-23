@@ -1,8 +1,6 @@
 const MODULE_ID = "foundry-mcp-bridge";
 const BRIDGE_PATH = "/mcp-bridge";
-// Disposable test-environment credential. A release-ready module must load
-// this from a GM-only setting instead of shipping it in public source.
-const BRIDGE_API_KEY = "mcp-bridge-key-2026";
+let bridgeToken = null;
 
 const numberOrNull = (value) => Number.isFinite(value) ? value : null;
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -155,10 +153,24 @@ async function bridgeFetch(path, options = {}) {
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
-      "X-MCP-Bridge-Key": BRIDGE_API_KEY,
+      ...(bridgeToken ? { "X-MCP-Bridge-Token": bridgeToken } : {}),
       ...(options.headers ?? {}),
     },
   });
+}
+
+async function announceBridge(clientId) {
+  bridgeToken = null;
+  const ready = await bridgeFetch("/ready", {
+    method: "POST",
+    body: JSON.stringify({ clientId }),
+  });
+  if (!ready.ok) throw new Error(`unable to pair GM bridge (${ready.status})`);
+  const pairing = await ready.json();
+  if (typeof pairing.bridgeToken !== "string" || pairing.bridgeToken.length < 20) {
+    throw new Error("GM bridge pairing response did not include a valid session token");
+  }
+  bridgeToken = pairing.bridgeToken;
 }
 
 async function runPreparedActorBridge(clientId) {
@@ -180,10 +192,7 @@ async function runPreparedActorBridge(clientId) {
     } catch (error) {
       console.warn("MCP Bridge: prepared actor bridge reconnecting", error);
       await delay(3_000);
-      await bridgeFetch("/ready", {
-        method: "POST",
-        body: JSON.stringify({ clientId, userId: globalThis.game?.user?.id ?? null }),
-      }).catch(() => {});
+      await announceBridge(clientId).catch(() => {});
     }
   }
 }
@@ -192,11 +201,7 @@ async function registerPreparedActorBridge() {
   if (!globalThis.game?.user?.isGM) return;
   const clientId = crypto.randomUUID();
   try {
-    const ready = await bridgeFetch("/ready", {
-      method: "POST",
-      body: JSON.stringify({ clientId, userId: globalThis.game.user.id }),
-    });
-    if (!ready.ok) throw new Error(`unable to announce readiness (${ready.status})`);
+    await announceBridge(clientId);
 
     console.info("MCP Bridge: prepared actor HTTP bridge ready", { module: MODULE_ID, userId: globalThis.game.user.id });
     globalThis.ui?.notifications?.info("MCP Bridge: prepared actor bridge ready");

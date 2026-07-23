@@ -2,6 +2,7 @@ const express = require("express");
 const { io: socketIO } = require("socket.io-client");
 const axios = require("axios");
 const { randomUUID } = require("node:crypto");
+const { bridgeTokenMatches } = require("./bridge-auth");
 const {
   collectionValues,
   listActorActivities,
@@ -14,13 +15,17 @@ const {
 const FOUNDRY_URL = process.env.FOUNDRY_URL || "http://foundry:30000";
 const USERNAME = process.env.FOUNDRY_USERNAME || "mcp-api";
 const PASSWORD = process.env.FOUNDRY_PASSWORD || "password-for-hermes";
-const API_KEY = process.env.API_KEY || "mcp-bridge-key-2026";
+const API_KEY = process.env.API_KEY;
 const PORT = parseInt(process.env.PORT || "30001", 10);
 const TIMEOUT = 30_000;
 const PREPARED_ACTOR_TIMEOUT = 8_000;
 const BRIDGE_POLL_TIMEOUT = 25_000;
 const BRIDGE_CLIENT_TTL = 45_000;
+const BRIDGE_SESSION_TIMEOUT = 8_000;
+const GM_ROLE = 4;
 const HP_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
+
+if (!API_KEY) throw new Error("API_KEY must be set for the sidecar API.");
 
 let socket = null;
 let connected = false;
@@ -229,34 +234,78 @@ function getWorld() {
 const app = express();
 app.use(express.json());
 
-function bridgeAuthorized(req) {
-  return req.headers["x-mcp-bridge-key"] === API_KEY;
-}
-
 function bridgeClient(req) {
   const clientId = typeof req.body?.clientId === "string" ? req.body.clientId : req.query?.clientId;
   if (typeof clientId !== "string" || clientId.length < 8 || clientId.length > 200) return null;
   return clientId;
 }
 
+function sessionFromCookie(cookieHeader) {
+  if (typeof cookieHeader !== "string") return null;
+  return cookieHeader.split(";").map((value) => value.trim())
+    .find((value) => value.startsWith("session="))?.slice("session=".length) ?? null;
+}
+
+// The browser's same-origin request carries its Foundry session cookie. Verify
+// that cookie with Foundry itself; never trust a client-supplied user ID.
+function validateBridgeGmSession(req) {
+  const session = sessionFromCookie(req.headers.cookie);
+  if (!session) return Promise.reject(new Error("A Foundry session cookie is required to pair the GM bridge."));
+
+  return new Promise((resolve, reject) => {
+    const bridgeSocket = socketIO(FOUNDRY_URL, {
+      transports: ["websocket"],
+      extraHeaders: { Cookie: `session=${session}` },
+      reconnection: false,
+      timeout: BRIDGE_SESSION_TIMEOUT,
+    });
+    const finish = (error, identity) => {
+      clearTimeout(timeout);
+      bridgeSocket.disconnect();
+      if (error) reject(error); else resolve(identity);
+    };
+    const timeout = setTimeout(() => finish(new Error("Foundry session validation timed out.")), BRIDGE_SESSION_TIMEOUT);
+    bridgeSocket.once("connect_error", () => finish(new Error("Foundry session validation failed.")));
+    bridgeSocket.once("session", (sessionData) => {
+      const userId = sessionData?.userId;
+      if (typeof userId !== "string" || !userId) return finish(new Error("Foundry session is not authenticated."));
+      bridgeSocket.emit("getJoinData", (joinData) => {
+        const user = joinData?.users?.find((candidate) => candidate?._id === userId);
+        if (!user || Number(user.role) < GM_ROLE) return finish(new Error("Only an authenticated Foundry GM can pair the bridge."));
+        finish(null, { userId });
+      });
+    });
+  });
+}
+
+function bridgeTokenAuthorized(req, client) {
+  return Boolean(client) && bridgeTokenMatches(req.headers["x-mcp-bridge-token"], client.bridgeToken);
+}
+
 // Same-origin HTTPS bridge for an active GM's Foundry browser client. The
 // regular sidecar API middleware below intentionally does not apply here.
-app.post("/mcp-bridge/ready", (req, res) => {
-  if (!bridgeAuthorized(req)) return res.status(401).json({ error: "Unauthorized" });
+app.post("/mcp-bridge/ready", async (req, res) => {
   const clientId = bridgeClient(req);
   if (!clientId) return res.status(400).json({ error: "A clientId is required" });
-
-  const current = preparedActorClients.get(clientId) ?? { clientId, poll: null };
-  current.userId = typeof req.body?.userId === "string" ? req.body.userId : null;
-  current.lastSeen = Date.now();
-  preparedActorClients.set(clientId, current);
-  res.json({ ok: true, clientId });
+  try {
+    const { userId } = await validateBridgeGmSession(req);
+    const current = preparedActorClients.get(clientId) ?? { clientId, poll: null };
+    clearBridgePoll(current);
+    current.userId = userId;
+    current.bridgeToken = randomUUID();
+    current.lastSeen = Date.now();
+    preparedActorClients.set(clientId, current);
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, clientId, bridgeToken: current.bridgeToken, expiresInSeconds: BRIDGE_CLIENT_TTL / 1_000 });
+  } catch (error) {
+    res.status(401).json({ error: error.message });
+  }
 });
 
 app.get("/mcp-bridge/poll", (req, res) => {
-  if (!bridgeAuthorized(req)) return res.status(401).json({ error: "Unauthorized" });
   const clientId = bridgeClient(req);
   const client = clientId && preparedActorClients.get(clientId);
+  if (!bridgeTokenAuthorized(req, client)) return res.status(401).json({ error: "Unauthorized" });
   if (!client) return res.status(404).json({ error: "Unknown bridge client; announce readiness first" });
 
   const current = client;
@@ -279,9 +328,9 @@ app.get("/mcp-bridge/poll", (req, res) => {
 });
 
 app.post("/mcp-bridge/respond", (req, res) => {
-  if (!bridgeAuthorized(req)) return res.status(401).json({ error: "Unauthorized" });
   const clientId = bridgeClient(req);
   const client = clientId && preparedActorClients.get(clientId);
+  if (!bridgeTokenAuthorized(req, client)) return res.status(401).json({ error: "Unauthorized" });
   if (!client) return res.status(404).json({ error: "Unknown bridge client" });
   client.lastSeen = Date.now();
 

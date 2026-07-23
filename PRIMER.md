@@ -45,7 +45,7 @@ Two-layer bridge:
 
 **Build:** `npm install && npm run build` (outputs to `dist/`)
 **Deploy MCP server:** copy `dist/` to `~/.hermes/mcp-servers/foundryvtt/dist/`
-**Deploy sidecar:** copy `sidecar/index.js`, `sidecar/actor-utils.js`, and `sidecar/Dockerfile` to Atomsk, then rebuild Docker container
+**Deploy sidecar:** copy `sidecar/index.js`, `sidecar/actor-utils.js`, `sidecar/bridge-auth.js`, and `sidecar/Dockerfile` to Atomsk, then rebuild Docker container
 **Deploy MCP Bridge module:** copy `module/module.json`, `module/scripts/prepared-actor-bridge.mjs`, and `traefik/foundry-mcp-bridge.yml` to Atomsk, then reload Foundry as an active GM
 
 ## How to Test Against Atomsk
@@ -98,7 +98,7 @@ curl -s -H "X-API-Key: mcp-bridge-key-2026" \
 ```bash
 # 1. Edit sidecar files locally
 # 2. Copy sidecar runtime files and Docker build definition to Atomsk
-scp sidecar/index.js sidecar/actor-utils.js sidecar/Dockerfile root@atomsk:/mnt/user/appdata/compose/foundry-sidecar/
+scp sidecar/index.js sidecar/actor-utils.js sidecar/bridge-auth.js sidecar/Dockerfile root@atomsk:/mnt/user/appdata/compose/foundry-sidecar/
 
 # 3. Rebuild + restart
 ssh root@atomsk "cd /mnt/user/appdata/compose/foundry-stack && \
@@ -117,7 +117,7 @@ scp module/scripts/prepared-actor-bridge.mjs root@atomsk:/mnt/user/appdata/found
 scp traefik/foundry-mcp-bridge.yml root@atomsk:/mnt/user/appdata/traefik/config/dynamic/
 ```
 
-Reload Foundry in an active GM browser session after copying the module files. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
+Reload Foundry in an active GM browser session after copying the module files. The bridge pairs only after the sidecar validates the browser's authenticated Foundry session as a GM, then uses an in-memory per-client token that expires after 45 seconds of inactivity. No bridge credential belongs in the module source. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
 
 The HP preview route is read-only. The apply route requires both `FOUNDRY_WRITE_ENABLED=true` in Hermes and the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP, but does not calculate typed damage or resistance, vulnerability, immunity, or activity automation.
 

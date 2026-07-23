@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { previewHpChange, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
+
+test("bridge source contains no browser-served shared API key", async () => {
+  const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
+  assert.equal(source.includes("mcp-bridge-key-2026"), false);
+  assert.match(source, /X-MCP-Bridge-Token/);
+});
 
 test("summarizePreparedActor preserves client-prepared combat values", () => {
   const summary = summarizePreparedActor({
