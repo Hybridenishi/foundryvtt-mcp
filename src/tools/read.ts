@@ -119,7 +119,7 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   server.registerTool(
     "get_item_activity",
     {
-      description: "Inspect one existing D&D 5e activity on an actor item. Returns targeting, activation, consumption, attack/save, damage/healing, and effect metadata. Discovery only: it does not roll, consume resources, create chat messages, or change Foundry data.",
+      description: "Inspect one existing D&D 5e activity on an actor item. Returns targeting, activation, consumption configuration, attack/save, damage/healing, and effect metadata. Discovery only: it does not determine final roll results or resource use, and it never rolls, consumes resources, creates chat messages, or changes Foundry data.",
       inputSchema: {
         actorId: z.string().min(1),
         itemId: z.string().min(1),

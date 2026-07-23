@@ -30,7 +30,7 @@ const actor = {
           attack1: {
             _id: "attack1", name: "Slash", type: "attack", activation: { type: "action", value: 1 },
             range: { value: 5, units: "ft" }, target: { affects: { type: "creature", count: "1" } },
-            consumption: { targets: [{ target: "itemUses", value: "1", scaling: { mode: "none" } }] },
+            consumption: { spellSlot: false, targets: [{ target: "itemUses", value: "1", scaling: { mode: "none" } }] },
             attack: { ability: "str", type: { value: "melee" }, bonus: "2", critical: { threshold: 19 } },
             save: { ability: ["dex"], dc: { value: 14, calculation: "spellcasting" }, onSave: "half" },
             damage: { parts: [{ number: 1, denomination: 8, bonus: "@mod", types: ["slashing"] }], onSave: "half" },
@@ -83,8 +83,10 @@ test("getActorActivity returns concise discovery metadata without execution", ()
   assert.equal(activity.range.value, 5);
   assert.equal(activity.target.count, "1");
   assert.equal(activity.consumption.targets[0].target, "itemUses");
+  assert.equal(activity.consumption.spellSlotConfig, false);
   assert.equal(activity.attack.criticalThreshold, 19);
   assert.deepEqual(activity.damage.parts[0].types, ["slashing"]);
+  assert.equal(activity.damage.includeBase, null);
   assert.equal(activity.effects[0].name, "Testing Effect");
   assert.equal(activity.execution.supported, false);
   assert.equal(getActorActivity(actor, "weapon-1", "missing"), null);

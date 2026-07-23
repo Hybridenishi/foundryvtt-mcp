@@ -199,7 +199,7 @@ function summarizeActivity(item, activity) {
       max: activity.uses?.max ?? null,
     },
     requirements: {
-      consumesSpellSlot: consumption.spellSlot === true,
+      spellSlotConfig: consumption.spellSlot ?? null,
       consumptionTargets: targets.length,
     },
     capabilities: {
@@ -254,7 +254,7 @@ function summarizeActivityDetails(item, activity) {
       concentration: duration.concentration ?? false,
     },
     consumption: {
-      spellSlot: consumption.spellSlot ?? false,
+      spellSlotConfig: consumption.spellSlot ?? null,
       targets: collectionValues(consumption.targets).map((entry) => ({
         target: entry?.target ?? null,
         value: entry?.value ?? null,
@@ -274,6 +274,7 @@ function summarizeActivityDetails(item, activity) {
       onSave: save.onSave ?? null,
     },
     damage: damage && {
+      includeBase: damage.includeBase ?? null,
       parts: summarizeRollParts(damage.parts),
       onSave: damage.onSave ?? null,
     },
