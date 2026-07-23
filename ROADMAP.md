@@ -309,7 +309,7 @@ Evaluate reliability, the need for an active Foundry client, permissions, result
 
 **Exit criteria:** The project records a clear architectural decision before implementing additional rule-aware mutations.
 
-**Current progress:** The initial module Socket.IO responder was proved non-viable because its client-to-client events do not reach the headless sidecar. The read-only prepared-Actor proof of concept now uses a same-origin HTTPS `/mcp-bridge` long-poll route through Traefik. It exposes a separate route/tool and deliberately requires an active GM Foundry client; deployment and live validation remain pending.
+**Current progress:** The initial module Socket.IO responder was proved non-viable because its client-to-client events do not reach the headless sidecar. The read-only prepared-Actor bridge instead uses a same-origin HTTPS `/mcp-bridge` long-poll route through Traefik. It was deployed and live-validated on 2026-07-23 with Foundry Bridge module 1.2.0 and an active GM browser: the sidecar obtained Mortala's prepared level 15, HP 78/108, AC 15, ability modifiers, and spell-slot maxima (4/3/3/3/2/1/1/1). The MCP tool is `get_prepared_5e_actor_summary`; when no GM browser is active, it returns an explicit bridge-unavailable error and never falls back to raw snapshot data. This confirms the architecture for read-only runtime values, while rule-aware mutations remain intentionally deferred.
 
 ### Phase 4 - Add safe 5e mutations
 
