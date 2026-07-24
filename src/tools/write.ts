@@ -60,7 +60,7 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   server.registerTool(
     "preview_item_activity_use",
     {
-      description: "Preview one exact embedded dnd5e utility activity for execution through the active GM bridge. This read-only check supports only unambiguous utility activities with no external target (an explicit self target is allowed), no template, scaling, spell slot, or concentration. It does not roll, consume resources, create chat output, or change Foundry; it returns a short-lived token for execute_item_activity_use.",
+      description: "Preview one exact embedded dnd5e utility activity for execution through the active GM bridge. This read-only check supports only unambiguous utility activities with no external target (an explicit self target is allowed), no template, scaling, spell slot, or concentration. The actor must also have a token on an active scene; dnd5e's Activity#use requires one even for self-targeted activities. It does not roll, consume resources, create chat output, or change Foundry; it returns a short-lived token for execute_item_activity_use.",
       inputSchema: {
         actorId: z.string().min(1),
         itemId: z.string().min(1),

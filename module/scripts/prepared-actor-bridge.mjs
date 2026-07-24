@@ -170,6 +170,10 @@ function resolveUtilityActivity(actor, request) {
   if (!activity.canUse) {
     throw new Error("dnd5e reports that this utility activity cannot currently be used.");
   }
+  const activeTokens = typeof actor.getActiveTokens === "function" ? actor.getActiveTokens(true, true) : [];
+  if (!activeTokens.length) {
+    throw new Error("This actor has no token on an active scene. dnd5e activity execution requires a placed token, even for a self-targeted activity with no other target.");
+  }
   return { item, activity };
 }
 

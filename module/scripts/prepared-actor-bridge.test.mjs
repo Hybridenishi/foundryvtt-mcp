@@ -61,7 +61,12 @@ function utilityFixture() {
     },
   };
   const item = { id: "item-1", name: "Test Trinket", system: { uses: { spent: 0, max: 1 }, activities: new Map([[activity.id, activity]]) } };
-  const actor = { id: "actor-1", name: "Test Actor", system: { resources: {}, spells: {}, attributes: { activation: {} } }, items: new Map([[item.id, item]]) };
+  const actor = {
+    id: "actor-1", name: "Test Actor",
+    system: { resources: {}, spells: {}, attributes: { activation: {} } },
+    items: new Map([[item.id, item]]),
+    getActiveTokens: () => [{}],
+  };
   return { actor, request: { itemId: item.id, activityId: activity.id } };
 }
 
@@ -77,6 +82,12 @@ test("utility activity preview is read-only and rejects unsupported execution sh
   assert.equal(previewUtilityActivityUse(actor, request).activityId, "utility-1");
   actor.items.get("item-1").system.activities.get("utility-1").target = { affects: { type: "creature", count: "1" } };
   assert.throws(() => previewUtilityActivityUse(actor, request), /target or template selection/);
+});
+
+test("utility activity preview rejects an actor with no token on an active scene", () => {
+  const { actor, request } = utilityFixture();
+  actor.getActiveTokens = () => [];
+  assert.throws(() => previewUtilityActivityUse(actor, request), /no token on an active scene/);
 });
 
 test("utility activity execution delegates to dnd5e and reports observed changes", async () => {
