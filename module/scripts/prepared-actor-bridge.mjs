@@ -159,7 +159,9 @@ function resolveUtilityActivity(actor, request) {
   if (typeof activity.use !== "function") {
     throw new Error("The installed dnd5e Activity#use method is unavailable.");
   }
-  if (activity.target?.template?.type || activity.target?.prompt || activity.target?.affects?.type || activity.target?.affects?.count) {
+  const targetType = activity.target?.affects?.type;
+  const targetCount = activity.target?.affects?.count;
+  if (activity.target?.template?.type || (activity.target?.prompt && targetType !== "self") || (targetType && targetType !== "self") || (targetCount && targetType !== "self")) {
     throw new Error("This utility activity cannot run without a target or template selection.");
   }
   if (activity.requiresSpellSlot || activity.canScale || activity.requiresConcentration) {

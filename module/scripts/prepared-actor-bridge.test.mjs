@@ -73,6 +73,10 @@ test("utility activity preview is read-only and rejects unsupported execution sh
   assert.throws(() => previewUtilityActivityUse(actor, { ...request, activityId: "missing" }), /was not found/);
   actor.items.get("item-1").system.activities.get("utility-1").target = { prompt: true };
   assert.throws(() => previewUtilityActivityUse(actor, request), /target or template selection/);
+  actor.items.get("item-1").system.activities.get("utility-1").target = { prompt: true, affects: { type: "self", count: "1" } };
+  assert.equal(previewUtilityActivityUse(actor, request).activityId, "utility-1");
+  actor.items.get("item-1").system.activities.get("utility-1").target = { affects: { type: "creature", count: "1" } };
+  assert.throws(() => previewUtilityActivityUse(actor, request), /target or template selection/);
 });
 
 test("utility activity execution delegates to dnd5e and reports observed changes", async () => {

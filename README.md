@@ -76,7 +76,7 @@ mcp_servers:
 | Tool | Description |
 |---|---|
 | `preview_hp_change` | Calculate direct damage/healing through the GM bridge and return a short-lived confirmation token; does not change Foundry |
-| `preview_item_activity_use` | Read-only eligibility check for one exact, unambiguous embedded dnd5e utility activity; returns a short-lived confirmation token |
+| `preview_item_activity_use` | Read-only eligibility check for one exact, unambiguous embedded dnd5e utility activity with no external target; returns a short-lived confirmation token |
 
 ### Write (7 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
