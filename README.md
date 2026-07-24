@@ -71,16 +71,18 @@ mcp_servers:
 |---|---|
 | `roll_dice` | Any formula: `1d20+5`, `4d6kh3`, `d%`, `adv`, `dis` |
 
-### HP preview (1 read-only tool)
+### Previews (2 read-only tools)
 
 | Tool | Description |
 |---|---|
 | `preview_hp_change` | Calculate direct damage/healing through the GM bridge and return a short-lived confirmation token; does not change Foundry |
+| `preview_item_activity_use` | Read-only eligibility check for one exact, unambiguous embedded dnd5e utility activity with no external target and the actor on an active scene; returns a short-lived confirmation token |
 
-### Write (6 tools, gated by `FOUNDRY_WRITE_ENABLED`)
+### Write (7 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
 | Tool | Description |
 |---|---|
+| `execute_item_activity_use` | Execute exactly one previewed dnd5e utility activity through the GM bridge; dnd5e controls consumption, effects, and chat output |
 | `update_actor` | Patch actor system attributes (`system.hp.value`, `system.currency.gp`, etc.) |
 | `create_actor` | Create a minimal actor; use Plutonium for complete 5e characters and creatures |
 | `delete_actor` | Delete an actor by ID |
@@ -126,6 +128,8 @@ API_KEY=<private-sidecar-api-key>
 | GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e actor summary; requires an active GM client with the bridge module |
 | POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns one-time confirmation token |
 | POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
+| POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview` | Validate one exact unambiguous dnd5e utility activity and issue a one-time confirmation token |
+| POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use` | Execute an exactly matching previewed dnd5e utility activity through the active GM client |
 
 `/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. A GM browser pairs by presenting its existing Foundry session cookie; the sidecar validates that session and issues an in-memory, per-client token that expires when the bridge goes idle. No shared API key is shipped in the module. The separate sidecar API key must be supplied privately through environment configuration and must never be committed.
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |

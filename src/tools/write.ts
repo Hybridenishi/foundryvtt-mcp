@@ -58,6 +58,46 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   );
 
   server.registerTool(
+    "preview_item_activity_use",
+    {
+      description: "Preview one exact embedded dnd5e utility activity for execution through the active GM bridge. This read-only check supports only unambiguous utility activities with no external target (an explicit self target is allowed), no template, scaling, spell slot, or concentration. The actor must also have a token on an active scene; dnd5e's Activity#use requires one even for self-targeted activities. It does not roll, consume resources, create chat output, or change Foundry; it returns a short-lived token for execute_item_activity_use.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        itemId: z.string().min(1),
+        activityId: z.string().min(1),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, itemId, activityId }) => {
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/items/${itemId}/activities/${activityId}/use/preview`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "execute_item_activity_use",
+    {
+      description: "Execute exactly one previewed dnd5e utility activity through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact, short-lived, one-time confirmation token. dnd5e performs the activity; this tool reports the resulting chat message, system-reported updates, and observed resource changes.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        itemId: z.string().min(1),
+        activityId: z.string().min(1),
+        confirmationToken: z.string().uuid(),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ actorId, itemId, activityId, confirmationToken }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/items/${itemId}/activities/${activityId}/use`, { confirmationToken });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "update_actor",
     {
       description: "Update an actor's system attributes (e.g., hp, currency, stats). Requires FOUNDRY_WRITE_ENABLED=true.",

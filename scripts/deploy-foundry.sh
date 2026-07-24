@@ -20,6 +20,7 @@ for path in \
   "$root_dir/sidecar/index.js" \
   "$root_dir/sidecar/actor-utils.js" \
   "$root_dir/sidecar/bridge-auth.js" \
+  "$root_dir/sidecar/confirmation.js" \
   "$root_dir/sidecar/Dockerfile" \
   "$root_dir/module/module.json" \
   "$root_dir/module/scripts/prepared-actor-bridge.mjs"; do
@@ -35,6 +36,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" "set -e
 cp -p '$sidecar_dir/index.js' '$sidecar_dir/index.js.backup-$stamp'
 cp -p '$sidecar_dir/actor-utils.js' '$sidecar_dir/actor-utils.js.backup-$stamp'
 cp -p '$sidecar_dir/bridge-auth.js' '$sidecar_dir/bridge-auth.js.backup-$stamp'
+cp -p '$sidecar_dir/confirmation.js' '$sidecar_dir/confirmation.js.backup-$stamp'
 cp -p '$sidecar_dir/Dockerfile' '$sidecar_dir/Dockerfile.backup-$stamp'
 cp -p '$module_dir/module.json' '$module_dir/module.json.backup-$stamp'
 cp -p '$module_dir/scripts/prepared-actor-bridge.mjs' '$module_dir/scripts/prepared-actor-bridge.mjs.backup-$stamp'"
@@ -43,6 +45,7 @@ scp -o BatchMode=yes -o ConnectTimeout=8 \
   "$root_dir/sidecar/index.js" \
   "$root_dir/sidecar/actor-utils.js" \
   "$root_dir/sidecar/bridge-auth.js" \
+  "$root_dir/sidecar/confirmation.js" \
   "$root_dir/sidecar/Dockerfile" \
   "$target:$sidecar_dir/"
 scp -o BatchMode=yes -o ConnectTimeout=8 \

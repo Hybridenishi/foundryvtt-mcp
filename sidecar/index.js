@@ -3,6 +3,7 @@ const { io: socketIO } = require("socket.io-client");
 const axios = require("axios");
 const { randomUUID } = require("node:crypto");
 const { bridgeTokenMatches } = require("./bridge-auth");
+const { consumeConfirmation, issueConfirmation } = require("./confirmation");
 const {
   collectionValues,
   getActorActivity,
@@ -25,6 +26,7 @@ const BRIDGE_CLIENT_TTL = 45_000;
 const BRIDGE_SESSION_TIMEOUT = 8_000;
 const GM_ROLE = 4;
 const HP_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
+const ACTIVITY_USE_CONFIRMATION_TTL = 2 * 60_000;
 
 if (!API_KEY) throw new Error("API_KEY must be set for the sidecar API.");
 if (!PASSWORD) throw new Error("FOUNDRY_PASSWORD must be set for the sidecar account.");
@@ -37,6 +39,7 @@ const pendingPreparedActorRequests = new Map();
 const preparedActorClients = new Map();
 const queuedPreparedActorRequests = [];
 const hpChangeConfirmations = new Map();
+const activityUseConfirmations = new Map();
 
 function isConnected() {
   return connected && Boolean(socket?.connected);
@@ -123,29 +126,28 @@ function parseHpChange(body) {
 }
 
 function issueHpChangeConfirmation(actorId, change) {
-  const now = Date.now();
-  for (const [token, confirmation] of hpChangeConfirmations) {
-    if (confirmation.expiresAt <= now) hpChangeConfirmations.delete(token);
-  }
-  const confirmationToken = randomUUID();
-  hpChangeConfirmations.set(confirmationToken, {
-    actorId,
-    ...change,
-    expiresAt: now + HP_CHANGE_CONFIRMATION_TTL,
-  });
-  return { confirmationToken, expiresAt: new Date(now + HP_CHANGE_CONFIRMATION_TTL).toISOString() };
+  return issueConfirmation(hpChangeConfirmations, randomUUID(), { actorId, ...change }, HP_CHANGE_CONFIRMATION_TTL);
 }
 
 function consumeHpChangeConfirmation(token, actorId, change) {
-  const confirmation = typeof token === "string" ? hpChangeConfirmations.get(token) : null;
-  if (!confirmation || confirmation.expiresAt <= Date.now()) {
-    if (typeof token === "string") hpChangeConfirmations.delete(token);
-    throw new Error("A valid, unexpired HP-change confirmation token is required. Preview the change again.");
-  }
-  if (confirmation.actorId !== actorId || confirmation.mode !== change.mode || confirmation.amount !== change.amount) {
-    throw new Error("The confirmation token does not match this actor and HP change.");
-  }
-  hpChangeConfirmations.delete(token);
+  consumeConfirmation(hpChangeConfirmations, token, { actorId, ...change }, "HP-change");
+}
+
+function activityUseBinding(actorId, itemId, activityId) {
+  return { actorId, itemId, activityId, operation: "use-utility", options: "{}" };
+}
+
+function issueActivityUseConfirmation(actorId, itemId, activityId) {
+  return issueConfirmation(
+    activityUseConfirmations,
+    randomUUID(),
+    activityUseBinding(actorId, itemId, activityId),
+    ACTIVITY_USE_CONFIRMATION_TTL,
+  );
+}
+
+function consumeActivityUseConfirmation(token, actorId, itemId, activityId) {
+  consumeConfirmation(activityUseConfirmations, token, activityUseBinding(actorId, itemId, activityId), "activity-use");
 }
 
 // ── 4-Step Auth (proven against Foundry v14) ──────────────────────
@@ -450,6 +452,40 @@ app.post("/api/mcp/actors/:id/hp-change", async (req, res) => {
   } catch (e) {
     const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
       : e.message.includes("mode") || e.message.includes("amount") ? 400 : 500;
+    res.status(status).json({ error: e.message });
+  }
+});
+
+// Guarded activity use is intentionally limited to unambiguous dnd5e utility
+// activities. The active GM client invokes Activity#use so dnd5e, not this
+// bridge, owns validation, resource consumption, effects, and chat output.
+app.post("/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview", async (req, res) => {
+  try {
+    const preview = await requestBridgeOperation({
+      type: "preview-utility-activity-use",
+      actorId: req.params.id,
+      itemId: req.params.itemId,
+      activityId: req.params.activityId,
+    });
+    res.json({ ...preview, confirmation: issueActivityUseConfirmation(req.params.id, req.params.itemId, req.params.activityId) });
+  } catch (e) {
+    res.status(e.message.includes("only supports") || e.message.includes("cannot") || e.message.includes("does not") ? 400 : 500).json({ error: e.message });
+  }
+});
+
+app.post("/api/mcp/actors/:id/items/:itemId/activities/:activityId/use", async (req, res) => {
+  try {
+    consumeActivityUseConfirmation(req.body?.confirmationToken, req.params.id, req.params.itemId, req.params.activityId);
+    const result = await requestBridgeOperation({
+      type: "use-utility-activity",
+      actorId: req.params.id,
+      itemId: req.params.itemId,
+      activityId: req.params.activityId,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
+      : e.message.includes("only supports") || e.message.includes("cannot") || e.message.includes("does not") ? 400 : 500;
     res.status(status).json({ error: e.message });
   }
 });

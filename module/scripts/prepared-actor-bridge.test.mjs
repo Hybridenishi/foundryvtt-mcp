@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { previewHpChange, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
+import { executeUtilityActivityUse, previewHpChange, previewUtilityActivityUse, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -47,4 +47,53 @@ test("previewHpChange accounts for temporary HP and caps healing", () => {
   const healing = previewHpChange(actor, { mode: "healing", amount: 10 });
   assert.deepEqual(healing.after, { value: 12, max: 12, temp: 3, tempmax: 0 });
   assert.equal(healing.unspentAmount, 5);
+});
+
+function utilityFixture() {
+  const activity = {
+    id: "utility-1", name: "Activate Trinket", type: "utility", canUse: true,
+    target: {}, uses: { spent: 0, max: 1 },
+    async use(usage, dialog) {
+      assert.deepEqual(usage, {});
+      assert.deepEqual(dialog, { configure: false });
+      this.uses.spent = 1;
+      return { message: { id: "message-1", uuid: "ChatMessage.message-1", title: "Activate Trinket" }, effects: [], templates: [], updates: { activity: { uses: { spent: 1 } } } };
+    },
+  };
+  const item = { id: "item-1", name: "Test Trinket", system: { uses: { spent: 0, max: 1 }, activities: new Map([[activity.id, activity]]) } };
+  const actor = {
+    id: "actor-1", name: "Test Actor",
+    system: { resources: {}, spells: {}, attributes: { activation: {} } },
+    items: new Map([[item.id, item]]),
+    getActiveTokens: () => [{}],
+  };
+  return { actor, request: { itemId: item.id, activityId: activity.id } };
+}
+
+test("utility activity preview is read-only and rejects unsupported execution shapes", () => {
+  const { actor, request } = utilityFixture();
+  const preview = previewUtilityActivityUse(actor, request);
+  assert.equal(preview.operation, "use-utility");
+  assert.equal(preview.observedResources.activityUses.spent, 0);
+  assert.throws(() => previewUtilityActivityUse(actor, { ...request, activityId: "missing" }), /was not found/);
+  actor.items.get("item-1").system.activities.get("utility-1").target = { prompt: true };
+  assert.throws(() => previewUtilityActivityUse(actor, request), /target or template selection/);
+  actor.items.get("item-1").system.activities.get("utility-1").target = { prompt: true, affects: { type: "self", count: "1" } };
+  assert.equal(previewUtilityActivityUse(actor, request).activityId, "utility-1");
+  actor.items.get("item-1").system.activities.get("utility-1").target = { affects: { type: "creature", count: "1" } };
+  assert.throws(() => previewUtilityActivityUse(actor, request), /target or template selection/);
+});
+
+test("utility activity preview rejects an actor with no token on an active scene", () => {
+  const { actor, request } = utilityFixture();
+  actor.getActiveTokens = () => [];
+  assert.throws(() => previewUtilityActivityUse(actor, request), /no token on an active scene/);
+});
+
+test("utility activity execution delegates to dnd5e and reports observed changes", async () => {
+  const { actor, request } = utilityFixture();
+  const result = await executeUtilityActivityUse(actor, request);
+  assert.equal(result.result.message.id, "message-1");
+  assert.equal(result.result.dnd5eUpdates.activity.uses.spent, 1);
+  assert.deepEqual(result.observedResourceChanges.activityUses, { before: { spent: 0, max: 1 }, after: { spent: 1, max: 1 } });
 });
