@@ -49,6 +49,7 @@ Every later phase adds mutations, and each would inherit today's gaps. This phas
 - [ ] Add a bounded Socket.IO reconnect loop. The disconnect handler currently gives up and the API returns 503 until the container restarts.
 - [ ] Allow concurrent bridge operations. Dispatch serves one parked poll per cycle today, which will not survive Phases 2 and 4.
 - [ ] Correct stale metadata: reported server version, the leftover fallback API key, the "execution is not implemented" note in the activity adapter, and the dead `test:auth` script.
+- [ ] Make the sidecar image buildable from the repository alone. `npm ci` in the Dockerfile needs a lockfile that is not tracked, and the deploy script ships neither it nor `sidecar/package.json`, so a rebuild currently depends on files left on the host by earlier manual setup.
 - [ ] Add the first tests that exercise something other than pure helpers — tool registration, route mapping, authentication failure, write gating, and timeouts.
 
 **Exit:** no advertised capability is ungated at the sidecar boundary, and the transport contract has tests.
