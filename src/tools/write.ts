@@ -58,6 +58,44 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   );
 
   server.registerTool(
+    "preview_temporary_hp",
+    {
+      description: "Preview replacing an actor's temporary HP with an exact value through the active GM bridge. This does not modify Foundry and returns a short-lived confirmation token for set_temporary_hp. Use amount 0 to clear temporary HP.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        amount: z.number().int().min(0).max(100_000),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, amount }) => {
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/temporary-hp/preview`, { amount });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "set_temporary_hp",
+    {
+      description: "Replace an actor's temporary HP with a previously previewed exact value through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact short-lived confirmation token from preview_temporary_hp. Use amount 0 to clear temporary HP.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        amount: z.number().int().min(0).max(100_000),
+        confirmationToken: z.string().uuid(),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ actorId, amount, confirmationToken }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/temporary-hp`, { amount, confirmationToken });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "preview_item_activity_use",
     {
       description: "Preview one exact embedded dnd5e utility activity for execution through the active GM bridge. This read-only check supports only unambiguous utility activities with no external target (an explicit self target is allowed), no template, scaling, spell slot, or concentration. The actor must also have a token on an active scene; dnd5e's Activity#use requires one even for self-targeted activities. It does not roll, consume resources, create chat output, or change Foundry; it returns a short-lived token for execute_item_activity_use.",

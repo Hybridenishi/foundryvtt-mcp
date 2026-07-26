@@ -26,6 +26,7 @@ const BRIDGE_CLIENT_TTL = 45_000;
 const BRIDGE_SESSION_TIMEOUT = 8_000;
 const GM_ROLE = 4;
 const HP_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
+const TEMPORARY_HP_CONFIRMATION_TTL = 2 * 60_000;
 const ACTIVITY_USE_CONFIRMATION_TTL = 2 * 60_000;
 
 if (!API_KEY) throw new Error("API_KEY must be set for the sidecar API.");
@@ -39,6 +40,7 @@ const pendingPreparedActorRequests = new Map();
 const preparedActorClients = new Map();
 const queuedPreparedActorRequests = [];
 const hpChangeConfirmations = new Map();
+const temporaryHpConfirmations = new Map();
 const activityUseConfirmations = new Map();
 
 function isConnected() {
@@ -131,6 +133,22 @@ function issueHpChangeConfirmation(actorId, change) {
 
 function consumeHpChangeConfirmation(token, actorId, change) {
   consumeConfirmation(hpChangeConfirmations, token, { actorId, ...change }, "HP-change");
+}
+
+function parseTemporaryHp(body) {
+  const amount = body?.amount;
+  if (!Number.isInteger(amount) || amount < 0 || amount > 100_000) {
+    throw new Error("amount must be an integer between 0 and 100000");
+  }
+  return { amount };
+}
+
+function issueTemporaryHpConfirmation(actorId, change) {
+  return issueConfirmation(temporaryHpConfirmations, randomUUID(), { actorId, ...change }, TEMPORARY_HP_CONFIRMATION_TTL);
+}
+
+function consumeTemporaryHpConfirmation(token, actorId, change) {
+  consumeConfirmation(temporaryHpConfirmations, token, { actorId, ...change }, "temporary-HP");
 }
 
 function activityUseBinding(actorId, itemId, activityId) {
@@ -452,6 +470,32 @@ app.post("/api/mcp/actors/:id/hp-change", async (req, res) => {
   } catch (e) {
     const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
       : e.message.includes("mode") || e.message.includes("amount") ? 400 : 500;
+    res.status(status).json({ error: e.message });
+  }
+});
+
+// Temporary HP is deliberately an explicit replacement, rather than an
+// inferred grant: callers preview the exact resulting value before the GM
+// client updates the prepared dnd5e Actor document.
+app.post("/api/mcp/actors/:id/temporary-hp/preview", async (req, res) => {
+  try {
+    const change = parseTemporaryHp(req.body);
+    const preview = await requestBridgeOperation({ type: "preview-temporary-hp", actorId: req.params.id, ...change });
+    res.json({ ...preview, confirmation: issueTemporaryHpConfirmation(req.params.id, change) });
+  } catch (e) {
+    res.status(e.message.includes("amount") ? 400 : 500).json({ error: e.message });
+  }
+});
+
+app.post("/api/mcp/actors/:id/temporary-hp", async (req, res) => {
+  try {
+    const change = parseTemporaryHp(req.body);
+    consumeTemporaryHpConfirmation(req.body?.confirmationToken, req.params.id, change);
+    const result = await requestBridgeOperation({ type: "set-temporary-hp", actorId: req.params.id, ...change });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
+      : e.message.includes("amount") ? 400 : 500;
     res.status(status).json({ error: e.message });
   }
 });

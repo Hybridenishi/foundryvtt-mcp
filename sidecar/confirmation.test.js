@@ -17,3 +17,11 @@ test("confirmation rejects stale tokens", () => {
   issueConfirmation(confirmations, "token-1", binding, 1, 10);
   assert.throws(() => consumeConfirmation(confirmations, "token-1", binding, "operation", 12), /unexpired/);
 });
+
+test("confirmation binds a temporary HP amount", () => {
+  const confirmations = new Map();
+  const binding = { actorId: "actor-1", amount: 8 };
+  issueConfirmation(confirmations, "token-1", binding, 1_000, 10);
+  assert.throws(() => consumeConfirmation(confirmations, "token-1", { ...binding, amount: 9 }, "temporary-HP", 20), /does not match/);
+  consumeConfirmation(confirmations, "token-1", binding, "temporary-HP", 20);
+});

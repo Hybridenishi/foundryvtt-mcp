@@ -127,6 +127,41 @@ async function applyHpChange(actor, request) {
   };
 }
 
+function validateTemporaryHp(request) {
+  const amount = request?.amount;
+  if (!Number.isInteger(amount) || amount < 0 || amount > 100_000) {
+    throw new Error("Temporary HP amount must be an integer between 0 and 100000.");
+  }
+  return { amount };
+}
+
+export function previewTemporaryHp(actor, request) {
+  const { amount } = validateTemporaryHp(request);
+  const hp = actor?.system?.attributes?.hp;
+  if (!hp || !Number.isFinite(hp.value) || !Number.isFinite(hp.max)) {
+    throw new Error("This actor does not have prepared current and maximum HP.");
+  }
+  const before = summarizePreparedActor(actor).hp;
+  return {
+    actorId: actor.id ?? actor._id ?? null,
+    actorName: actor.name ?? "Unnamed actor",
+    operation: "set-temporary-hp",
+    requestedTemporaryHp: amount,
+    rulesNote: "This operation replaces the actor's current temporary HP with the exact requested value. It does not decide whether a newly granted temporary-HP effect should replace an existing value.",
+    before,
+    after: { ...before, temp: amount },
+  };
+}
+
+export async function setTemporaryHp(actor, request) {
+  const preview = previewTemporaryHp(actor, request);
+  if (typeof actor.update !== "function") {
+    throw new Error("The Foundry Actor.update method is unavailable.");
+  }
+  await actor.update({ "system.attributes.hp.temp": request.amount });
+  return { ...preview, after: summarizePreparedActor(actor).hp };
+}
+
 function resourceSnapshot(actor, item, activity) {
   const serialize = (value) => JSON.parse(JSON.stringify(value ?? null));
   return {
@@ -235,6 +270,10 @@ async function handleBridgeRequest(request) {
       return previewHpChange(actor, request);
     case "apply-hp-change":
       return applyHpChange(actor, request);
+    case "preview-temporary-hp":
+      return previewTemporaryHp(actor, request);
+    case "set-temporary-hp":
+      return setTemporaryHp(actor, request);
     case "preview-utility-activity-use":
       return previewUtilityActivityUse(actor, request);
     case "use-utility-activity":

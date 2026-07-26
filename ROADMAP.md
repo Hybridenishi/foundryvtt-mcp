@@ -154,7 +154,259 @@ Tier B only, and every item follows the same discipline: one adapter per module,
 
 ---
 
-## Explicit non-goals
+### 4. Modern 5e actions are activity-based
+
+In current `dnd5e`, attacks, damage, saves, healing, spellcasting, summoning, and other actions are represented by activities attached to Items. A useful 5e integration must understand:
+
+```text
+Actor -> embedded Item -> Activity
+```
+
+Creating a complete NPC is consequently more than filling in ability scores and HP. Its attacks, spells, features, uses, effects, and recovery behavior generally come from embedded Items and their activities.
+
+### 5. Prefer compendium documents over hand-built complex payloads
+
+Minimal raw creation is useful for placeholder actors. For complete monsters, spells, weapons, and features, importing or cloning a compatible compendium document is preferable to generating the full `dnd5e` schema by hand.
+
+This reduces schema errors and lets the installed system supply defaults, migrations, embedded activities, and derived behavior.
+
+### 6. Rule-aware actions should use Foundry/dnd5e behavior
+
+The sidecar currently performs raw `modifyDocument` operations through an internal Socket.IO protocol. That is acceptable for constrained, headless CRUD, but it is a fragile basis for rule-aware behavior.
+
+Foundry documents expose supported operations such as `Combat.nextTurn()` and `Combat.setInitiative()`. The `dnd5e` system likewise owns activity use, rolls, rests, damage handling, and derived data. Calling those operations inside Foundry is preferable to reimplementing them in the MCP server.
+
+This creates an architectural decision:
+
+- Keep the current headless sidecar for reads and narrowly validated document changes.
+- Add a small in-world Foundry bridge module if the MCP needs to execute activities, rests, system rolls, or other client-side public APIs.
+
+The bridge-module decision should be tested with one thin proof of concept after the basic contract is repaired.
+
+### 7. Do not build separate MCP adapters for 2014 and 2024 rules
+
+The official `dnd5e` system already supports legacy and modern content and behavior, and the live characters mix both sources on the same Actor. The MCP should preserve and expose each Item's `system.source.rules` value while letting `dnd5e` apply the rules.
+
+The world default and Item provenance should influence compendium/content selection. The MCP should not independently implement proficiency, resistance, exhaustion, resting, or other edition-sensitive rules.
+
+### 8. Pin and verify versions
+
+The `dnd5e` 5.3 release includes breaking internal data changes, including advancement storage, senses, and chat-message types. Supporting “Foundry 14” alone is not a precise enough compatibility promise.
+
+At startup, the bridge should report and verify:
+
+```json
+{
+  "foundryVersion": "14.365",
+  "systemId": "dnd5e",
+  "systemVersion": "5.3.3",
+  "defaultRulesMode": "world-setting-if-available",
+  "contentRules": ["2014", "2024"]
+}
+```
+
+Unknown versions may remain readable, but 5e writes should fail safely unless explicitly allowed.
+
+### 9. Generic dice rolls and 5e rolls are different tools
+
+The existing local dice roller is useful for standalone formulas. It does not have the actor's roll data, effects, activity configuration, system settings, or `dnd5e` roll behavior.
+
+Keep `roll_dice` as a generic utility. Add separate rule-aware tools such as `roll_skill_check`, `roll_save`, or `use_activity` only when they can be executed through the installed system.
+
+### 10. Secrets and mutations need tightening
+
+The API key and Foundry password currently have committed fallback values. Real credentials should be rotated and required through environment variables.
+
+Macro execution also needs special treatment: a macro can mutate nearly anything in the world, so it should not be exposed as an unrestricted read operation. It should be disabled by default or limited to an explicit allowlist.
+
+## Implementation Roadmap
+
+### Phase 0 - Capture the working deployment
+
+**Goal:** Establish a known-good reference deployment.
+
+- [x] Record the deployed Foundry and `dnd5e` versions.
+- [ ] Record the deployed Node, sidecar build, and MCP build versions.
+- [ ] Copy or diff the deployed sidecar against `sidecar/index.js` (SSH credentials were unavailable during inspection; the live routes strongly match the checked-in sidecar).
+- [x] Inspect the active `foundry-mcp-bridge` module manifest and entry source.
+- [x] Record which read-only MCP routes work in the deployed environment.
+- Export and sanitize fixtures for:
+  - [x] Player-character schema, Item-type, Activity-type, and rules-source summaries
+  - One NPC
+  - One weapon with an attack activity
+  - One spell
+  - One class or monster feature
+  - One active combat, if available
+- Store fixtures under a test-only directory with names and private content removed.
+- [done] Rotate the sidecar/service-account credentials, remove browser-served credentials, and publish the v1.4.0 stable release.
+
+**Exit criteria:** The repository contains no unexplained difference from the deployed implementation, and the supported version tuple is documented.
+
+### Phase 1 - Repair and test the transport contract
+
+**Goal:** Make every advertised tool either work or disappear.
+
+- Install dependencies and restore a passing TypeScript build.
+- Create a route/tool contract inventory.
+- Implement missing sidecar routes that are actually needed.
+- Remove tools that are not useful enough to maintain.
+- Correct the refresh method mismatch.
+- Make `/system-info` return Foundry, system, default-rules setting, detected Item rules sources, and module versions.
+- Make health checks reflect the real Socket.IO state.
+- Add disconnect detection and bounded reconnection.
+- Add timeouts and error handling to Socket.IO callbacks.
+- Require secrets through environment variables and provide a safe `.env.example`.
+- Add automated tests for route mapping, authentication errors, timeouts, and write gating.
+
+**Exit criteria:** Build and tests pass; every registered MCP tool has a matching, tested implementation.
+
+**Current progress:** The local contract includes `POST /refresh`, world Item detail, scene-token detail, and journal-entry detail. Unimplemented compendium and macro tools, plus the unverified initiative write, were removed from the MCP surface. A reference deployment health check connected successfully to Foundry v14 / dnd5e 5.3.3 and its system-info route reported the active module list and content-rule sources.
+
+### Phase 2 - Add a read-only D&D 5e adapter
+
+**Goal:** Return useful 5e concepts without changing the world.
+
+- Add runtime guards for `systemId === "dnd5e"` and the supported version range.
+- Define small normalized response schemas instead of duplicating the entire `dnd5e` data model.
+- Add `get_5e_actor_summary` with:
+  - Actor type, level or challenge rating
+  - HP, temporary HP, AC, movement, senses
+  - Abilities, saves, skills, proficiency
+  - Conditions, immunities, resistances, vulnerabilities
+  - Spell slots and commonly used resources when present
+- Add `list_actor_items` and `list_item_activities`.
+- Finish compendium listing and searching.
+- Preserve an optional raw-document read for debugging.
+- Test normalization with the sanitized live fixtures.
+
+**Exit criteria:** Hermes can accurately inspect a character or NPC and discover its usable activities without knowing raw Foundry paths.
+
+**Current progress:** v1.5.0 adds `get_item_activity` alongside `get_5e_actor_summary`, `list_actor_items`, `list_item_activities`, and `validate_5e_actor`. Embedded Items and Activities are paginated, source-rule provenance is retained, and the validator warns about large documents and custom Activity types. `get_item_activity` is deliberately discovery-only: it reports activation, targeting, consumption, attack/save, damage/healing, and effect metadata without rolling, consuming resources, creating chat messages, or changing Foundry data. Its configuration cautions explicitly prevent inferring final resource costs or roll outcomes. Representative imported characters confirmed that large sheets can contain hundreds of Items and Activities, with mixed 2014 and 2024 sources. Natural-language acceptance testing confirmed that the MCP client selects `search_actors`, `list_item_activities`, and `get_item_activity` directly. The Socket.IO world payload exposes unprepared source data: fields such as AC, HP maximum, character level, ability modifiers, and spell slots may be null even when Foundry can derive them at runtime. Accurate prepared data requires an active in-world bridge.
+
+### Phase 3 - Prove the rule-aware execution path
+
+**Goal:** Decide whether a Foundry bridge module is warranted.
+
+Implement one end-to-end proof of concept, preferably one of:
+
+- Read prepared Actor data (derived HP, AC, level, modifiers, and slots) through a GM client.
+- Advance combat through `Combat.nextTurn()`.
+- Set initiative through `Combat.setInitiative()`.
+- Execute one Item activity and return its chat/roll result.
+
+Compare two approaches:
+
+1. Raw headless Socket.IO document modification.
+2. A minimal in-world bridge module calling public Foundry/dnd5e APIs.
+
+Evaluate reliability, the need for an active Foundry client, permissions, result reporting, and deployment complexity.
+
+**Exit criteria:** The project records a clear architectural decision before implementing additional rule-aware mutations.
+
+**Current progress:** The initial module Socket.IO responder was proved non-viable because its client-to-client events do not reach the headless sidecar. The prepared-Actor bridge instead uses a same-origin HTTPS `/mcp-bridge` long-poll route through a reverse proxy. v1.4.0 pairs only after the sidecar validates the browser's authenticated Foundry GM session, then issues a short-lived per-client in-memory token; no browser-served credential is used. Live validation confirmed correct prepared combat values from an active GM browser. When no GM browser is active, the tool returns an explicit bridge-unavailable error and never falls back to raw snapshot data.
+
+### Phase 4 - Add safe 5e mutations
+
+**Goal:** Cover common play operations with narrow, validated tools.
+
+Recommended initial tools:
+
+- `apply_damage`
+- `apply_healing`
+- `set_temporary_hp`
+- `adjust_resource`
+- `add_condition`
+- `remove_condition`
+- `set_initiative`
+- `next_turn`
+
+Requirements for every mutation:
+
+- Verify the supported Foundry and `dnd5e` versions.
+- Check actor/document existence and user permissions.
+- Validate semantic inputs instead of accepting arbitrary paths.
+- Return before/after values and a mutation receipt.
+- Read back the changed document before reporting success.
+- Produce a clear error when the installed system rejects the operation.
+
+Keep the generic `update_actor` escape hatch disabled by default.
+
+**Exit criteria:** Common combat-state changes work predictably and are covered by live smoke tests.
+
+**Current progress:** v1.4.0 includes `preview_hp_change` and confirmation-gated `apply_hp_change`. The preview is read-only and returns a one-time two-minute token scoped to the actor, mode, and amount. Apply is gated by `FOUNDRY_WRITE_ENABLED` and runs via the active GM bridge using dnd5e 5.3.3's `Actor.applyDamage`, so direct damage consumes temporary HP. In an isolated test world, disposable-actor checks verified temporary-HP absorption, normal HP damage, healing, prepared readback, and cleanup. The follow-up `preview_temporary_hp` / `set_temporary_hp` flow uses the same safeguards but explicitly replaces the prepared temporary-HP value (including clearing it with `0`); it intentionally does not infer how a spell or feature resolves competing temporary-HP grants. Neither path models typed damage, resistance, vulnerability, immunity, or activity automation; those remain future activity-level operations.
+
+### Phase 5 - Plutonium handoff and activity workflows
+
+**Goal:** Let Plutonium create complete 5e content, then operate on the imported documents.
+
+- Detect an Actor or Item created through Plutonium or Rivet.
+- Add `validate_5e_actor` to report Item counts, Activity counts, rules-source mix, missing activities, and unsupported custom activity types.
+- Provide a concise post-import summary and stable document IDs.
+- Support the normal Plutonium workflow of importing character content directly to an Actor.
+- Inspect and select embedded activities.
+- Execute attacks, saves, damage, healing, and spell activities.
+- Add short-rest and long-rest operations through `dnd5e` behavior.
+- Preserve legacy/modern provenance from `system.source.rules`.
+- Keep compendium tools for already-installed packs, not as a replacement for Plutonium's importer.
+- Keep raw creation only for deliberately minimal placeholders.
+- Treat direct Plutonium API automation as optional and version-pinned because its backend/API surface is undocumented and internal.
+
+**Exit criteria:** After a Plutonium/Rivet import, Hermes can find the new document, validate it, summarize it, and use its existing 5e activities without reconstructing system internals.
+
+### Phase 6 - Operational polish
+
+**Goal:** Make maintenance after upgrades routine.
+
+- Maintain the deployment script and post-deployment smoke test as Foundry/Docker layouts evolve.
+- Log versions, reconnects, mutations, and failures without logging secrets.
+- Add backup guidance before destructive operations.
+- Continue rotating private credentials on the normal secrets-management schedule; never commit them, include them in examples, or serve them to browser clients.
+- Verify that the stable deployment's API is reachable only from the intended network and caller.
+- Update `README.md`, `PRIMER.md`, and `SPEC.md` to describe one current architecture.
+- Document the tested Foundry/`dnd5e` compatibility matrix.
+
+**Exit criteria:** An upgrade can be deployed and verified without manual guesswork.
+
+**Current progress:** v1.4.0 is published as a stable module release. The sidecar and module use private environment-managed service credentials, while an active GM bridge pairs through its authenticated Foundry session and receives only a short-lived in-memory token. `scripts/deploy-foundry.sh` backs up and deploys the checked-in runtime files, validates Compose, rebuilds the sidecar, and performs a read-only health smoke check. After a GM hard refresh, `scripts/smoke-foundry.sh --require-bridge` verifies the active bridge responder without reading credentials or changing world data.
+
+## Recommended First Tool Set
+
+Keep the initial public surface deliberately small.
+
+### Read
+
+- `ping`
+- `system_info`
+- `world_summary`
+- `search_actors`
+- `get_5e_actor_summary`
+- `validate_5e_actor`
+- `list_actor_items`
+- `list_item_activities`
+- `get_scenes`
+- `get_scene_tokens`
+- `get_combat_state`
+- `get_chat_log`
+- `search_journal`
+- `search_compendium`
+
+### Generic utility
+
+- `roll_dice`
+
+### Write
+
+- `create_chat_message`
+- `apply_damage`
+- `apply_healing`
+- `set_initiative`
+- `next_turn`
+- `add_condition`
+- `remove_condition`
+
+Add actor creation, deletion, macro execution, activity execution, and rests only after their safety and execution path are proven.
+
+## Explicit Non-Goals
 
 - Supporting Pathfinder, Call of Cthulhu, or arbitrary Foundry systems
 - Reimplementing D&D 5e rules in TypeScript

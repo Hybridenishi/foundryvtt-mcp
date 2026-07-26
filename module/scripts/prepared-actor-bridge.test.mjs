@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { executeUtilityActivityUse, previewHpChange, previewUtilityActivityUse, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
+import { executeUtilityActivityUse, previewHpChange, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -47,6 +47,24 @@ test("previewHpChange accounts for temporary HP and caps healing", () => {
   const healing = previewHpChange(actor, { mode: "healing", amount: 10 });
   assert.deepEqual(healing.after, { value: 12, max: 12, temp: 3, tempmax: 0 });
   assert.equal(healing.unspentAmount, 5);
+});
+
+test("temporary HP preview is explicit and setting it returns prepared readback", async () => {
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 7, max: 12, temp: 3, tempmax: 0 } } },
+    async update(change) {
+      assert.deepEqual(change, { "system.attributes.hp.temp": 9 });
+      this.system.attributes.hp.temp = 9;
+    },
+  };
+
+  assert.deepEqual(previewTemporaryHp(actor, { amount: 0 }).after, { value: 7, max: 12, temp: 0, tempmax: 0 });
+  const result = await setTemporaryHp(actor, { amount: 9 });
+  assert.deepEqual(result.before, { value: 7, max: 12, temp: 3, tempmax: 0 });
+  assert.deepEqual(result.after, { value: 7, max: 12, temp: 9, tempmax: 0 });
+  assert.throws(() => previewTemporaryHp(actor, { amount: -1 }), /between 0 and 100000/);
 });
 
 function utilityFixture() {
