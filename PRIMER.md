@@ -77,10 +77,13 @@ curl -s -H "X-API-Key: <private-sidecar-api-key>" \
 | GET | `/api/mcp/actors/:id` | Raw actor without Items by default (`?includeItems=true` for debugging) |
 | GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
 | GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e summary; requires active GM browser bridge |
+| GET | `/api/mcp/party/prepared` | Prepared concise overview of all character actors; requires active GM browser bridge |
 | POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns a short-lived confirmation token |
 | POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
 | POST | `/api/mcp/actors/:id/temporary-hp/preview` | Read-only exact temporary-HP replacement preview; returns a one-time confirmation token |
 | POST | `/api/mcp/actors/:id/temporary-hp` | Apply an exactly matching, previewed temporary-HP replacement through the active GM client |
+| POST | `/api/mcp/actors/:id/conditions/preview` | Read-only standard-condition change preview; returns a one-time confirmation token |
+| POST | `/api/mcp/actors/:id/conditions` | Apply an exactly matching, previewed standard-condition change through the active GM client |
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/items/:itemId/activities/:activityId` | Discovery-only detail for one embedded Activity |
@@ -106,15 +109,19 @@ curl -s -H "X-API-Key: <private-sidecar-api-key>" \
 
 Set `FOUNDRY_DEPLOY_TARGET`, `FOUNDRY_COMPOSE_DIR`, `FOUNDRY_SIDECAR_DIR`, and `FOUNDRY_MODULE_DIR` for your host, then run `npm run deploy:foundry`. The script backs up and copies the sidecar/module runtime files, validates the remote Compose configuration, rebuilds only the sidecar, and checks its private API from inside the container. It does not print secrets or mutate Foundry world data.
 
+Set `FOUNDRY_WRITE_ENABLED=true` in both the MCP client and the sidecar container only when enabling mutations. The sidecar independently rejects every mutation route when that setting is absent or false.
+
 The `traefik/` directory is an optional example only. Any reverse proxy is suitable if it preserves the Foundry browser session cookie while forwarding the same-origin `/mcp-bridge` route to the sidecar.
 
 After the deploy, hard-refresh Foundry in an active GM browser session, then run `npm run smoke:foundry -- --require-bridge`. This second check requires an authenticated GM bridge responder and reports Foundry/system versions plus responder count.
 
 Reload Foundry in an active GM browser session after copying the module files. The bridge pairs only after the sidecar validates the browser's authenticated Foundry session as a GM, then uses an in-memory per-client token that expires after 45 seconds of inactivity. No bridge credential belongs in the module source. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
 
-The HP preview route is read-only. The apply route requires both `FOUNDRY_WRITE_ENABLED=true` in the MCP client environment and the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP, but does not calculate typed damage or resistance, vulnerability, immunity, or activity automation.
+The HP preview route is read-only. The apply route requires `FOUNDRY_WRITE_ENABLED=true` in both the MCP client and sidecar environments, plus the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP, but does not calculate typed damage or resistance, vulnerability, immunity, or activity automation.
 
 Temporary HP uses the same guarded workflow but is an explicit replacement: preview the exact value, then set it with the matching token. It accepts `0` to clear temporary HP and intentionally does not infer how a spell or feature should resolve competing temporary-HP grants.
+
+Standard conditions use the same preview-and-apply guard through Foundry's `Actor.toggleStatusEffect`; generic condition changes deliberately refuse exhaustion because it has edition-sensitive levels.
 
 **Important:** The sidecar uses Docker build cache. If your changes don't seem to take effect, use `--no-cache`:
 ```bash

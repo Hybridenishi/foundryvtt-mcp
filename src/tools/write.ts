@@ -96,6 +96,46 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   );
 
   server.registerTool(
+    "preview_condition_change",
+    {
+      description: "Preview adding or removing one standard D&D 5e condition through the active GM bridge. This does not modify Foundry and returns a short-lived confirmation token for apply_condition_change. Exhaustion is level-based and is intentionally unsupported by this generic tool.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        mode: z.enum(["add", "remove"]),
+        statusId: z.string().regex(/^[a-z0-9-]{1,80}$/i),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, mode, statusId }) => {
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/conditions/preview`, { mode, statusId });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "apply_condition_change",
+    {
+      description: "Apply one exact, previewed standard D&D 5e condition change through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the short-lived confirmation token from preview_condition_change. Exhaustion is intentionally unsupported.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        mode: z.enum(["add", "remove"]),
+        statusId: z.string().regex(/^[a-z0-9-]{1,80}$/i),
+        confirmationToken: z.string().uuid(),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ actorId, mode, statusId, confirmationToken }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/conditions`, { mode, statusId, confirmationToken });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "preview_item_activity_use",
     {
       description: "Preview one exact embedded dnd5e utility activity for execution through the active GM bridge. This read-only check supports only unambiguous utility activities with no external target (an explicit self target is allowed), no template, scaling, spell slot, or concentration. The actor must also have a token on an active scene; dnd5e's Activity#use requires one even for self-targeted activities. It does not roll, consume resources, create chat output, or change Foundry; it returns a short-lived token for execute_item_activity_use.",

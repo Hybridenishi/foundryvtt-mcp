@@ -25,3 +25,11 @@ test("confirmation binds a temporary HP amount", () => {
   assert.throws(() => consumeConfirmation(confirmations, "token-1", { ...binding, amount: 9 }, "temporary-HP", 20), /does not match/);
   consumeConfirmation(confirmations, "token-1", binding, "temporary-HP", 20);
 });
+
+test("confirmation binds every condition-change field", () => {
+  const confirmations = new Map();
+  const binding = { actorId: "actor-1", mode: "add", statusId: "blinded" };
+  issueConfirmation(confirmations, "token-1", binding, 1_000, 10);
+  assert.throws(() => consumeConfirmation(confirmations, "token-1", { ...binding, mode: "remove" }, "condition-change", 20), /does not match/);
+  consumeConfirmation(confirmations, "token-1", binding, "condition-change", 20);
+});

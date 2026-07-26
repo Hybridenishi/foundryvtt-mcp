@@ -17,4 +17,6 @@ test("sidecar source requires private API and Foundry-account credentials", () =
   assert.equal(source.includes("password-for-hermes"), false);
   assert.match(source, /API_KEY must be set/);
   assert.match(source, /FOUNDRY_PASSWORD must be set/);
+  assert.match(source, /function requireWriteEnabled/);
+  assert.match(source, /actors\/:id\/delete", requireWriteEnabled/);
 });

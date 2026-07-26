@@ -74,6 +74,20 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   );
 
   server.registerTool(
+    "get_prepared_party_overview",
+    {
+      description: "Get prepared HP, AC, conditions, and spell slots for all character actors from an active GM's Foundry client. This is a concise read-only party view and requires the Foundry MCP Bridge module with an active GM browser session.",
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      try {
+        const res = await http.get("/api/mcp/party/prepared");
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "list_actor_items",
     {
       description: "List an actor's embedded D&D 5e items in pages. Filter by name, item type, or source rules edition.",

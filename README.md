@@ -37,9 +37,9 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (33 total)
+## Tools (36 total)
 
-### Read and service (21 tools)
+### Read and service (22 tools)
 
 | Tool | Description |
 |---|---|
@@ -50,6 +50,7 @@ mcp_servers:
 | `get_actor` | Raw, unprepared actor data for debugging; embedded Items are opt-in |
 | `get_5e_actor_summary` | Concise raw 5e snapshot; derived fields may require Foundry UI confirmation |
 | `get_prepared_5e_actor_summary` | Prepared 5e values from an active GM Foundry client |
+| `get_prepared_party_overview` | Prepared HP, AC, conditions, and spell slots for all character actors |
 | `list_actor_items` | Paginated embedded Item list, filterable by name, type, and 2014/2024 source |
 | `list_item_activities` | Paginated embedded Activity list, filterable by Item, name, type, and rules source |
 | `get_item_activity` | Discovery-only inspection of one activity's targeting, consumption, rolls, and effects; never executes it |
@@ -71,20 +72,22 @@ mcp_servers:
 |---|---|
 | `roll_dice` | Any formula: `1d20+5`, `4d6kh3`, `d%`, `adv`, `dis` |
 
-### Previews (3 read-only tools)
+### Previews (4 read-only tools)
 
 | Tool | Description |
 |---|---|
 | `preview_hp_change` | Calculate direct damage/healing through the GM bridge and return a short-lived confirmation token; does not change Foundry |
 | `preview_temporary_hp` | Preview replacing temporary HP with an exact value through the GM bridge and return a short-lived confirmation token; does not change Foundry |
+| `preview_condition_change` | Preview adding or removing one standard condition through the GM bridge; exhaustion is intentionally excluded |
 | `preview_item_activity_use` | Read-only eligibility check for one exact, unambiguous embedded dnd5e utility activity with no external target; returns a short-lived confirmation token |
 
-### Write (8 tools, gated by `FOUNDRY_WRITE_ENABLED`)
+### Write (9 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
 | Tool | Description |
 |---|---|
 | `execute_item_activity_use` | Execute exactly one previewed dnd5e utility activity through the GM bridge; dnd5e controls consumption, effects, and chat output |
 | `set_temporary_hp` | Replace an actor's temporary HP with a previewed exact value through the GM bridge; use 0 to clear it |
+| `apply_condition_change` | Apply an exactly previewed standard-condition change through the GM bridge |
 | `update_actor` | Patch actor system attributes (`system.hp.value`, `system.currency.gp`, etc.) |
 | `create_actor` | Create a minimal actor; use Plutonium for complete 5e characters and creatures |
 | `delete_actor` | Delete an actor by ID |
@@ -114,6 +117,7 @@ FOUNDRY_USERNAME=<foundry-service-account-name>
 FOUNDRY_PASSWORD=<private-foundry-account-password>
 PORT=30001
 API_KEY=<private-sidecar-api-key>
+FOUNDRY_WRITE_ENABLED=true             # Must be set here as well as in the MCP client to enable mutations
 ```
 
 ## Endpoints (sidecar)
@@ -128,10 +132,13 @@ API_KEY=<private-sidecar-api-key>
 | GET | `/api/mcp/actors/:id` | Raw actor without embedded Items by default (`?includeItems=true` for debugging) |
 | GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
 | GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e actor summary; requires an active GM client with the bridge module |
+| GET | `/api/mcp/party/prepared` | Prepared concise overview of all character actors; requires an active GM client |
 | POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns one-time confirmation token |
 | POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
 | POST | `/api/mcp/actors/:id/temporary-hp/preview` | Read-only exact temporary-HP replacement preview; returns one-time confirmation token |
 | POST | `/api/mcp/actors/:id/temporary-hp` | Apply an exactly matching, previewed temporary-HP replacement through the active GM client |
+| POST | `/api/mcp/actors/:id/conditions/preview` | Read-only standard-condition change preview; returns one-time confirmation token |
+| POST | `/api/mcp/actors/:id/conditions` | Apply an exactly matching, previewed standard-condition change through the active GM client |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview` | Validate one exact unambiguous dnd5e utility activity and issue a one-time confirmation token |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use` | Execute an exactly matching previewed dnd5e utility activity through the active GM client |
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
@@ -204,8 +211,8 @@ Create its release asset after validating the build:
 
 ```bash
 npm run package:module
-gh release create v1.6.0 release/foundry-mcp-bridge.zip module/module.json \
-  --title "MCP Bridge v1.6.0" --notes "Confirmation-guarded temporary-HP replacement through the active GM bridge."
+gh release create v1.7.0 release/foundry-mcp-bridge.zip module/module.json \
+  --title "MCP Bridge v1.7.0" --notes "Prepared party overview, safe standard-condition changes, and server-side write gating."
 ```
 
 The ZIP contains `module.json` and `scripts/` at its root, as required by Foundry's module installer.
