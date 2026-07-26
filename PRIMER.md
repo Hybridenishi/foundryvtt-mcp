@@ -38,9 +38,13 @@ Two-layer bridge:
 │   └── scripts/prepared-actor-bridge.mjs
 ├── traefik/                # Optional Traefik example for the same-origin bridge route
 │   └── foundry-mcp-bridge.yml
-├── SPEC.md                 # Full implementation plan
+├── ROADMAP.md              # Planned work, by phase
+├── FINDINGS.md             # Deployment inspection data and architectural findings
+├── SPEC.md                 # Original implementation plan (historical)
 └── AGENTS.md               # Claude/AI instructions
 ```
+
+**Adding a sidecar file** requires three edits, not one: the hardcoded preflight list in `scripts/deploy-foundry.sh`, the `COPY` line in `sidecar/Dockerfile`, and the scp block in the deploy script. A file missing from any of them will pass local tests and fail on the host.
 
 **Build:** `npm install && npm run build` (outputs to `dist/`)
 **Deploy MCP server:** copy `dist/` to the directory configured by your MCP client.
@@ -80,6 +84,8 @@ curl -s -H "X-API-Key: <private-sidecar-api-key>" \
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/items/:itemId/activities/:activityId` | Discovery-only detail for one embedded Activity |
+| POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview` | Validate one exact unambiguous dnd5e utility activity; returns a short-lived confirmation token |
+| POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use` | Execute an exactly matching previewed utility activity through the active GM client |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
 | POST | `/api/mcp/actors/create` | Create actor `{name, type?, system?}` |
 | POST | `/api/mcp/actors/:id/update` | Update `{system: {...}}` |

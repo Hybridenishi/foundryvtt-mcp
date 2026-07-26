@@ -134,13 +134,13 @@ API_KEY=<private-sidecar-api-key>
 | POST | `/api/mcp/actors/:id/temporary-hp` | Apply an exactly matching, previewed temporary-HP replacement through the active GM client |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview` | Validate one exact unambiguous dnd5e utility activity and issue a one-time confirmation token |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use` | Execute an exactly matching previewed dnd5e utility activity through the active GM client |
-
-`/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. A GM browser pairs by presenting its existing Foundry session cookie; the sidecar validates that session and issues an in-memory, per-client token that expires when the bridge goes idle. No shared API key is shipped in the module. The separate sidecar API key must be supplied privately through environment configuration and must never be committed.
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/items/:itemId/activities/:activityId` | Concise discovery-only detail for one embedded Activity |
 | GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
+| POST | `/api/mcp/actors/create` | Create a minimal actor |
 | POST | `/api/mcp/actors/:id/update` | Update actor system |
+| POST | `/api/mcp/actors/:id/delete` | Delete an actor |
 | GET | `/api/mcp/items` | Search items |
 | GET | `/api/mcp/items/:id` | One item |
 | GET | `/api/mcp/scenes` | All scenes |
@@ -152,6 +152,8 @@ API_KEY=<private-sidecar-api-key>
 | GET | `/api/mcp/journal` | Search journal |
 | GET | `/api/mcp/journal/:id` | One entry |
 | GET | `/api/mcp/users` | All users |
+
+`/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. A GM browser pairs by presenting its existing Foundry session cookie; the sidecar validates that session and issues an in-memory, per-client token that expires when the bridge goes idle. No shared API key is shipped in the module. The separate sidecar API key must be supplied privately through environment configuration and must never be committed.
 
 ## Deploy and verify a Foundry host
 

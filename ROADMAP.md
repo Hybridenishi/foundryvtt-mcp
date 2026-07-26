@@ -2,163 +2,157 @@
 
 ## Objective
 
-Build a small, dependable MCP server for one supported environment:
+A small, dependable MCP server for one supported environment: Foundry Virtual Tabletop v14 build 365 and the official `dnd5e` system 5.3.3, with mixed 2014 and 2024 content whose per-Item rules source is preserved.
 
-- Foundry Virtual Tabletop v14 Build 365
-- The official `dnd5e` game system v5.3.3
-- Mixed 2014 and 2024 content, preserving each Item's rules source
+This is a personal server for one table. It will not become a system-neutral Foundry integration. Foundry-level concepts — documents, scenes, journals, chat, combat — remain reusable internally, but the public MCP tools speak D&D 5e.
 
-This project will not attempt to become a system-neutral Foundry integration. Foundry-level concepts such as documents, scenes, journals, chat, and combat remain reusable internally, but the public MCP tools should speak in D&D 5e terms.
+Background, live-deployment inspection data, and architectural findings live in [`FINDINGS.md`](FINDINGS.md).
 
-## Where to Start
+## Coupling policy
 
-Start with **a deployed-baseline and contract milestone**, not new 5e write tools.
+Everything below is organized by one rule: **prefer the layer with the longest maintenance horizon.**
 
-The local MCP server currently advertises operations that the checked-in sidecar does not implement. Until the local source is reconciled with the working reference deployment, it is difficult to tell whether a failure is caused by transport, a missing route, an outdated local file, or incorrect 5e data.
+| Tier | What | Use |
+|---|---|---|
+| **A** | Foundry core and `dnd5e` system APIs | Preferred for everything. Ships with the platform this project already pins. |
+| **B** | Documented module hooks and public module APIs | Later and optional. One adapter per module, capability-probed at startup, pinned to a known-good version range. |
+| **C** | Module internals and undocumented backends | Never. |
 
-The baseline inspection has established the Foundry and `dnd5e` versions, live route surface, installed bridge-module source, and representative character schemas. The first implementation milestone should now:
+Phases 1 through 6 are Tier A only. Third-party module support is deferred to [Phase 7](#phase-7--module-support-tier) and is explicitly optional: when a supported module is missing or its version is unrecognized, the affected tools return an explicit degraded error. They do not crash, and they do not silently change behavior.
 
-1. Disable or replace the inert `foundry-mcp-bridge` module.
-2. Establish a one-to-one contract between every advertised MCP tool and a tested sidecar endpoint.
-3. Add a small automated smoke test that verifies that contract.
-4. Add sanitized, minimal fixtures derived from the imported characters.
+**This is not a rule against modules.** The reference world runs `midi-qol`, `dae`, and `automated-conditions-5e`, and they mutate the same state these tools touch. Calling the Tier A API is precisely what lets their hooks fire correctly; writing around them is the unsafe path. Tier B work is about *interpreting and reporting* what those modules did — never about calling them.
 
-The sidecar API key and Foundry service-account password are supplied only through private environment configuration. The browser bridge uses authenticated GM-session pairing and a short-lived per-client token; no reusable bridge credential is served to Foundry clients.
+The same reasoning demotes Plutonium. It remains the best importer available and stays the recommended way to create complete 5e content, but the core plan no longer assumes it: Phase 3 gives the project its own content path through installed compendia, and Plutonium-aware discovery moves to Phase 7.
 
-Once that baseline is trustworthy, add 5e-aware reads before 5e-aware writes.
+## What is already built
 
-## Representative Baseline Snapshot (2026-07-22)
+Shipped in v1.4.0 and v1.5.0:
 
-A representative sidecar deployment at port 30001 was inspected with read-only requests. No world mutations were performed.
+- **Read-only 5e adapter** — `get_5e_actor_summary`, `list_actor_items`, `list_item_activities`, `get_item_activity`, `validate_5e_actor`. Embedded Items and Activities are paginated, rules-source provenance is retained, and the validator reports document shape and rules mix.
+- **Prepared-data bridge** — a module running in an active GM browser, paired only after the sidecar validates that browser's authenticated Foundry GM session, then issued a short-lived in-memory token. Returns runtime-derived values the headless socket cannot supply.
+- **Confirmation-gated HP changes** — `preview_hp_change` / `apply_hp_change`, applied through `dnd5e`'s `Actor.applyDamage` so temporary HP is consumed correctly.
+- **Guarded utility-activity execution** — `preview_item_activity_use` / `execute_item_activity_use`, running `Activity#use()` for real behind a strict eligibility guard.
+- **Deploy and smoke scripts** — `scripts/deploy-foundry.sh` and `scripts/smoke-foundry.sh --require-bridge`.
 
-### Connection and world summary
+The preview → scoped confirmation token → `dnd5e` API pattern established by the last two is the template every future mutation follows.
 
-- Sidecar health: connected
-- Actors: 7
-  - Characters: 4
-  - NPCs: 3
-- Scenes: 1
-- World Items: 0
-- Users: 6
-- Journal index entries returned: 1
+---
 
-The three NPCs are minimal and contain no embedded Items. The four imported player characters are rich `dnd5e` documents:
+## Phase 1 — Consolidate the foundation
 
-| Character | Full payload | Embedded Items | Notable activity types | 2014 Items | 2024 Items |
-|---|---:|---:|---|---:|---:|
-| Character A | ~646 KiB | 112 | attack, damage, enchant, heal, save, transform, utility | 82 | 29 |
-| Character B | ~2.43 MiB | 380 | attack, cast, damage, DDB macro, enchant, heal, save, summon, transform, utility | 236 | 143 |
-| Character C | ~360 KiB | 66 | attack, check, damage, enchant, heal, save, summon, utility | 52 | 13 |
-| Character D | ~293 KiB | 54 | attack, damage, heal, save, utility | 15 | 38 |
+**Goal:** make the existing surface trustworthy before adding to it.
 
-Each character also has one Item whose rules source is blank. Across the four sheets there are 612 embedded Items. The largest sheet alone has 343 embedded spells, so returning full Actor documents by default will consume excessive MCP context. The first 5e read adapter should provide summaries and paginated/filterable Item and Activity listings.
+Every later phase adds mutations, and each would inherit today's gaps. This phase closes them once.
 
-The live data confirms that `system.activities` is an object keyed by activity ID, not an array, and that Item activities include fields added by Midi-QOL and DDB Importer. Adapters should preserve unknown activity fields and normalize only the subset needed for tool responses.
+- [ ] Enforce write gating in the sidecar, not only in `src/tools/write.ts`. An API-key holder can currently call `POST /api/mcp/actors/:id/delete` directly.
+- [ ] Converge the five legacy raw writes (`update_actor`, `create_actor`, `delete_actor`, `next_turn`, `create_chat_message`) onto the preview → confirmation → `dnd5e` pattern, or quarantine them behind an explicit debug flag.
+- [ ] Add a bounded Socket.IO reconnect loop. The disconnect handler currently gives up and the API returns 503 until the container restarts.
+- [ ] Allow concurrent bridge operations. Dispatch serves one parked poll per cycle today, which will not survive Phases 2 and 4.
+- [ ] Correct stale metadata: reported server version, the leftover fallback API key, the "execution is not implemented" note in the activity adapter, and the dead `test:auth` script.
+- [ ] Make the sidecar image buildable from the repository alone. `npm ci` in the Dockerfile needs a lockfile that is not tracked, and the deploy script ships neither it nor `sidecar/package.json`, so a rebuild currently depends on files left on the host by earlier manual setup.
+- [ ] Add the first tests that exercise something other than pure helpers — tool registration, route mapping, authentication failure, write gating, and timeouts.
 
-### Verified live route contract
+**Exit:** no advertised capability is ungated at the sidecar boundary, and the transport contract has tests.
 
-| Operation | Live result |
-|---|---:|
-| `GET /refresh` | 200 |
-| `GET /world-summary` | 200 |
-| `GET /system-info` | 200 |
-| `GET /actors` | 200 |
-| `GET /actors/:id` | 200 |
-| `GET /items` | 200 |
-| `GET /scenes` | 200 |
-| `GET /scenes/:id/tokens` | 404 |
-| `GET /combats/active` | 200 |
-| `GET /chat-log` | 200 |
-| `GET /journal` | 200 |
-| `GET /journal/:id` | 404 |
-| `GET /users` | 200 |
-| `GET /compendiums` | 404 |
-| `GET /macros` | 404 |
-| `POST /refresh` | 404 |
+## Phase 2 — Core 5e play operations
 
-Mutation routes were not probed merely to discover their status because doing so could alter the live world.
+**Goal:** cover the operations this table performs every session, through `dnd5e`'s own APIs.
 
-### Verified versions and remaining discovery gap
+All Tier A, all through the GM bridge, all following the established mutation pattern: verify supported versions, check existence and permissions, validate semantic inputs rather than accepting arbitrary paths, return before/after values and a receipt, and read back the changed document before reporting success.
 
-- Foundry Virtual Tabletop: Version 14 Build 365
-- Game system: `dnd5e` 5.3.3
-- Deployed bridge module: `foundry-mcp-bridge` 1.0.0
+- [ ] **Conditions** — apply and remove via `Actor#toggleStatusEffect`. Exhaustion is a 0–6 level, not a boolean, and 2014 and 2024 exhaustion behave differently, so read the actor's rules provenance rather than assuming a mode.
+- [ ] **Concentration** — report who is concentrating on what. Its own mechanic in `dnd5e` 5.x, not a generic condition, and useful as a read long before it is useful as a write.
+- [ ] **Rests** — short and long rest through `dnd5e`, with `dialog: false` and hit-dice spending as an explicit input, since no GM is present to answer a prompt. Pin the API signature; it moved across 5.x.
+- [ ] **Combat control** — replace the sidecar-computed turn advance with `Combat#nextTurn()`, and add `Combat#setInitiative()`, initiative rolling, previous turn, and combat start/end.
+- [ ] **Typed damage** — `Actor.applyDamage` accepts typed damage. Until it is wired through, HP changes silently report wrong numbers against a resistant, vulnerable, or immune target.
+- [ ] **Spell slots and resources** — adjust slots (including pact magic, currently filtered out of prepared summaries) and limited-use resources.
+- [ ] **Party overview** — one call returning prepared HP, AC, conditions, and slots for all player characters, so inspecting the party does not mean fetching four multi-hundred-kilobyte sheets.
 
-These values were obtained from Foundry's served manifests and join page. The sidecar's live `/system-info` response still omits them and must be expanded before the MCP can enforce compatibility automatically.
+**Exit:** common combat and recovery operations run through `dnd5e` with verifiable receipts.
 
-There is not a single useful rules-edition value for the imported content: every player sheet contains a mixture of Items marked `system.source.rules = "2014"` and `"2024"`. A world default may still affect system behavior, but the MCP must preserve and report Item-level rules provenance.
+## Phase 3 — Compendium, content, and rules lookup
 
-### Relevant active modules
+**Goal:** find and use installed content without depending on an importer module.
 
-The live world reports `foundry-mcp-bridge` 1.0.0 as active. Its manifest points to `api.js`, which was inspected through Foundry's static module path. The module attempts to register Express routes through `game.express` and contains useful examples of public Actor, Combat, ChatMessage, compendium, and Macro operations.
+- [ ] **Compendium index search** — index-first via `pack.getIndex({ fields })`, filterable by pack and document type, paginated, with full document load as an explicit second step. Declaring index fields up front is what makes filtering on CR, spell level, or school possible without loading thousands of documents.
+- [ ] **Fetch by UUID** — the stable handle everything else cites.
+- [ ] **Rules lookup grounded in installed content** — answer rules questions from this world's actual packs. Requires a defined precedence order (world documents, then homebrew packs, then system and SRD packs) and must report which source won and whether it was 2014 or 2024. Cite by UUID so answers are clickable in Foundry. This is retrieval and provenance reporting, not rules reimplementation.
+- [ ] **NPC HP policy** — set placed NPC hit points by policy: maximum, average, or rolled. Small, independently useful, and matches how this table already runs.
+- [ ] **Clone from compendium** — create actors and items by cloning installed documents, so the project can stand up a complete NPC on its own. Raw creation stays for deliberately minimal placeholders.
 
-However, direct checks against those routes on Foundry port 30000 return 404. The module is marked active but its REST API is not registered; the sidecar on port 30001 is the component currently serving working requests. The likely reason is that normal Foundry module JavaScript runs in a client context where an Express application is not a supported public API.
+**Exit:** a complete NPC can be created from installed content, and a homebrew-aware rules question can be answered with its source cited.
 
-The original module prototype hardcoded a test API key in `api.js`. Because module JavaScript is served as a static asset, the credential could be retrieved without authenticating to the MCP API. v1.4.0 replaces that design with authenticated GM-session pairing and a short-lived per-client token.
+## Phase 4 — Session lifecycle, event log, and memory contract
 
-Several rule- and automation-sensitive 5e modules are also active, including:
+**Goal:** give the table a durable record of what happened, and a stable contract for the tools that consume it.
 
-- `automated-conditions-5e`
-- `dae`
-- `ddb-importer`
-- `midi-qol`
-- `socketlib`
-- `tidy5e-sheet`
+- [ ] **Session lifecycle** — `POST /api/mcp/sessions/start` and `/end`, authenticated with the existing `X-API-Key`. The separate audio-recorder application calls start on record-start and end on record-stop; no new auth model is required.
+- [ ] **Event tap** — subscribe to Foundry document changes on the socket the sidecar already holds. This is an architectural change: reads currently re-request a full world dump, so there is no delta subscription to build on.
+- [ ] **Normalized event schema** — type, ISO wall-clock timestamp, monotonic per-session sequence, actor and scene references, structured payload. The timestamp pair is what allows a transcript segment to be joined to what was mechanically happening in Foundry at that moment; that join is the point of the whole phase.
+- [ ] **Deterministic classifiers, in code** — critical hits and fumbles from roll data, HP crossing zero, death saves, combat start and turn and end, condition changes, rests, defeat. No model is required for any of these, and filtering hard at the sidecar is what keeps the log signal rather than noise.
+- [ ] **Durable append-only storage** — nothing in this project writes to disk today, and the sidecar image declares no volume, so this needs a Compose volume mount alongside the code.
+- [ ] **Query API and recall tools** — list sessions, fetch a session's events filtered by type and time, and fetch recent events.
+- [ ] **Pregame/postgame snapshot diff** — capture party state at both session boundaries and diff them for wrap-up. Deliberately snapshot-based rather than derived from the audit log, because most of what happens at a table never passes through this server.
+- [ ] **Mutation audit log** — append-only, recording what this server changed, who asked, before and after values, and the confirmation token. A different question from the diff, and it needs its own store.
+- [ ] **Published event-schema contract** — versioned, so downstream consumers can depend on it.
 
-Their presence strengthens the case for executing rule-aware operations through Foundry and `dnd5e` APIs. Directly changing raw HP, effects, activities, or combat fields may bypass automation expected by the live world.
+The first consumer is a Discord bot with vector memory, answering questions like "when was the last time I rolled a crit?" or "what was that creature we killed last session?" **It lives in its own repository.** This project owes it a stable event stream and query API; the vector store, the bot, and any local-model inference belong on that side of the boundary.
 
-### Plutonium import strategy
+**Exit:** the recorder can open and close a session, and its events can be queried afterward through a documented, versioned contract.
 
-Plutonium is installed and active in the live world. Its served manifest reports:
+## Phase 5 — Journal and lore writes
 
-- Plutonium: `2.16.2.v14`
-- Foundry compatibility: minimum 14, verified 14.364, maximum 14.999
-- `dnd5e` compatibility: minimum 5.3.0, verified 5.3.3, maximum 5.3.999
-- Required dependency: `lib-wrapper`
+**Goal:** write NPC and lore journals with correct visibility.
 
-This is a strong compatibility match for the live Foundry 14 Build 365 and `dnd5e` 5.3.3 stack.
+This is the highest-consequence write on the roadmap, and not for rules reasons. A wrong hit point value is corrected in seconds; DM notes rendered visible to a player cannot be un-seen.
 
-Plutonium should be the **importer of record** for creatures, character content, classes, spells, features, and Items. The MCP should not duplicate Plutonium's data conversion or character-building logic. The preferred workflow is:
+- [ ] **Named visibility profiles** — `gm`, `party`, and `players: [...]`, expanding to Foundry ownership maps. Foundry supports per-user ownership natively, so per-player secrets and blanket visibility are the same mechanism at different settings.
+- [ ] **Visibility is required, and defaults to GM-only.** A single call may not produce mixed-visibility content; the caller declares which bucket each piece belongs to.
+- [ ] **Explicit page ownership** — pages inherit from the parent entry unless overridden, which is the likeliest way notes leak. GM pages set ownership explicitly rather than relying on a default.
+- [ ] **Receipts report resolved names, not IDs.** "Visible to Alice and Bob" can be checked at a glance; an ownership map keyed by user ID cannot, and an unverifiable receipt on a spoiler-sensitive write is worth nothing.
+- [ ] **Fail loud on name resolution.** Players are named by player or character name. An ambiguous or unmatched name refuses the write rather than guessing.
+- [ ] **NPC and journal linking** — `@UUID` enrichers in page content plus a module flag on the actor, maintained in both directions. Not the biography field, which DDB Importer and Plutonium overwrite on re-import.
+- [ ] **Preview and apply gating**, as with HP changes.
 
-```text
-Plutonium UI / Rivet -> imports Actor or Item -> MCP discovers it -> MCP summarizes, validates, and uses it
-```
+**Exit:** an NPC journal can be written with per-player visibility and a receipt naming exactly who can see it.
 
-For player characters, Plutonium recommends importing directly to the Actor sheet so its specialized workflows can run. It also recommends importing only content that is needed instead of bulk-populating a world or compendium, because imported content becomes stale and large collections hurt performance.
+## Phase 6 — Player-scoped access and approval
 
-Plutonium's custom backend endpoint is explicitly internal and undocumented. The MCP should not depend on it. Automating Plutonium imports may be considered later, but only as an experimental, version-pinned adapter with a fallback to the normal Plutonium UI or Rivet workflow.
+**Goal:** let players query their own characters without granting GM reach.
 
-## Findings
+- [ ] Extend bridge pairing to non-GM users, with the token carrying the Foundry user id and role.
+- [ ] Evaluate every call against that user's document ownership as Foundry already sees it. No parallel permission model.
+- [ ] Add a GM approval queue for player-initiated writes, reusing the existing scoped single-use confirmation helper with the GM as approver. An in-world chat card is the natural approval surface, since the GM is already looking at Foundry.
 
-### 1. The two-layer architecture is reasonable
+**Exit:** a player can read their own character, and any write they request waits for GM approval.
 
-The current shape is appropriate for a personal server:
+## Phase 7 — Module support tier
 
-```text
-Hermes -> MCP server (TypeScript/stdio) -> HTTP sidecar -> Foundry (Socket.IO)
-```
+**Goal:** add module-aware behavior without inheriting module fragility.
 
-It keeps Foundry authentication and internal transport isolated in the sidecar. The TypeScript MCP process can focus on tool descriptions, input validation, and stable results.
+Tier B only, and every item follows the same discipline: one adapter per module, a capability probe at startup, a pinned known-good version range, and explicit degraded errors when a module is absent or unrecognized. Module versions are already reported through system info, so the input exists.
 
-### 2. The checked-in layers do not currently have a complete contract
+- [ ] **Adapter and capability-probe pattern** — build this first; the rest are instances of it.
+- [ ] **`midi-qol`** — completion semantics for activity execution. Midi wraps `Activity#use()`, so attack and save execution already passes through it when active; its workflow is asynchronous and may involve player-facing dialogs, which makes "did this finish, and what happened" the real work. Budget effort here, not on the API coupling.
+- [ ] **`dae` and `automated-conditions-5e`** — interpret and report condition automation that fired as a result of a Tier A write.
+- [ ] **Plutonium and DDB Importer** — detect newly imported documents, summarize them, and validate them. Demoted from the core plan; the recommended content workflow, not a dependency.
 
-The MCP server registers 26 tools, while the checked-in sidecar is missing routes used by several of them, including:
+**Exit:** each supported module has one adapter, one version range, and a documented degraded mode.
 
-- Item details
-- Scene tokens
-- Journal entry details
-- Compendium listing and search
-- Macro listing and execution
-- Setting initiative
-- `refresh_world` also calls `POST /refresh`, while the sidecar implements `GET /refresh`
+## Phase 8 — Operational polish
 
-The README tool totals and route list are also out of sync with the implementation.
+**Goal:** make maintenance after upgrades routine.
 
-### 3. Foundry core is system-neutral; Actor and Item system data are not
+- [ ] Log versions, reconnects, mutations, and failures — without logging secrets.
+- [ ] Add backup guidance before destructive operations.
+- [ ] Verify the deployment's API is reachable only from the intended network and caller.
+- [ ] Publish the tested Foundry and `dnd5e` compatibility matrix.
+- [ ] Keep `README.md`, `PRIMER.md`, and `AGENTS.md` describing one current architecture.
+- [ ] Continue rotating private credentials on the normal schedule; never commit them, include them in examples, or serve them to browser clients.
 
-Foundry's core document types are generic, but the contents and behavior of `Actor.system` and `Item.system` are defined by the installed game system. The `dnd5e` system supplies data models, migrations, derived values, and custom behavior.
+**Exit:** an upgrade can be deployed and verified without manual guesswork.
 
-The MCP server should therefore avoid pretending that arbitrary `system` JSON is a stable cross-system API. A focused 5e adapter will be smaller and safer.
+---
 
 ### 4. Modern 5e actions are activity-based
 
@@ -417,23 +411,16 @@ Add actor creation, deletion, macro execution, activity execution, and rests onl
 - Supporting Pathfinder, Call of Cthulhu, or arbitrary Foundry systems
 - Reimplementing D&D 5e rules in TypeScript
 - Supporting every Foundry or `dnd5e` version
-- Exposing unrestricted macro execution by default
-- Generating every field of complex `dnd5e` documents from scratch
+- Depending on module internals or undocumented backends, including Plutonium's
 - Reimplementing Plutonium's creature, content, or character importers
-- Depending on Plutonium's undocumented internal backend API for core operation
+- Generating every field of complex `dnd5e` documents from scratch
+- Hosting the Discord bot, its vector store, or local model inference in this repository
+- Encoding one encounter-balancing opinion — this table sets NPC hit points to maximum while the DMG budget assumes otherwise, so any balancer is profile-driven or is not built
+- Exposing unrestricted macro execution by default
 - Growing a large generic document-mutation API
 
-## Reference Documentation
+## Ordering notes
 
-- [Foundry VTT v14 API](https://foundryvtt.com/api/)
-- [Foundry public versus private API guidance](https://foundryvtt.com/api/#reading-these-api-docs)
-- [Foundry system data models](https://foundryvtt.com/article/system-data-models/)
-- [Foundry Actor API](https://foundryvtt.com/api/v14/classes/foundry.documents.Actor.html)
-- [Foundry Combat API](https://foundryvtt.com/api/v14/classes/foundry.documents.Combat.html)
-- [`dnd5e` wiki](https://github.com/foundryvtt/dnd5e/wiki)
-- [`dnd5e` activities](https://github.com/foundryvtt/dnd5e/wiki/Activities)
-- [`dnd5e` roll formulas](https://github.com/foundryvtt/dnd5e/wiki/Roll-Formulas)
-- [`dnd5e` releases](https://github.com/foundryvtt/dnd5e/releases)
-- [Plutonium overview](https://wiki.tercept.net/en/Plutonium)
-- [Plutonium feature and import guide](https://wiki.tercept.net/en/Plutonium/Features-Guide)
-- [Plutonium configuration](https://wiki.tercept.net/en/Plutonium/Features-Guide/Configuration)
+Phase 1 gates Phases 2, 5, and 6, because each adds mutations that would otherwise inherit the missing sidecar write gate. Phase 3 is read-heavy and can proceed in parallel if that is more useful.
+
+Phase 4's event tap is the prerequisite for both the Discord bot and any future session-recap work, which is why it sits ahead of the lore and access phases despite being the largest. Recap is deliberately absent as a phase: once the snapshot diff, the event log, and journal writes exist, a recap is a prompt composed from them rather than a feature to build.
