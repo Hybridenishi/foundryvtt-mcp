@@ -15,7 +15,7 @@ Two-layer bridge:
 |-------|----------|------|------|
 | **MCP Server** | Your MCP client's configured server directory | `src/` | TypeScript MCP server. It runs as a child process over stdio, registers tools (`search_actors`, `create_actor`, etc.), and calls the sidecar over HTTP. |
 | **Sidecar** | Your Foundry host's Docker deployment (`foundry-sidecar`, port 30001 by default) | `sidecar/` | Express proxy. Authenticates with Foundry via Socket.IO (4-step handshake), then exposes REST endpoints. All writes go through `socket.emit("modifyDocument", ...)`. |
-| **MCP Bridge module** | Foundry data: `modules/foundry-mcp-bridge/` | Same repo, `module/` | Runs in an active GM's Foundry browser client and returns prepared, runtime-derived Actor values through the same-origin `/mcp-bridge` HTTP route. Read-only in the initial proof of concept. |
+| **MCP Bridge module** | Foundry data: `modules/foundry-mcp-bridge/` | Same repo, `module/` | Runs in an active GM's Foundry browser client and returns prepared, runtime-derived Actor values through the same-origin `/mcp-bridge` HTTP route. It also performs narrowly confirmation-guarded HP and temporary-HP changes. |
 
 ## Repo: `github.com/Hybridenishi/foundryvtt-mcp`
 
@@ -75,6 +75,8 @@ curl -s -H "X-API-Key: <private-sidecar-api-key>" \
 | GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e summary; requires active GM browser bridge |
 | POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns a short-lived confirmation token |
 | POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
+| POST | `/api/mcp/actors/:id/temporary-hp/preview` | Read-only exact temporary-HP replacement preview; returns a one-time confirmation token |
+| POST | `/api/mcp/actors/:id/temporary-hp` | Apply an exactly matching, previewed temporary-HP replacement through the active GM client |
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/items/:itemId/activities/:activityId` | Discovery-only detail for one embedded Activity |
@@ -105,6 +107,8 @@ After the deploy, hard-refresh Foundry in an active GM browser session, then run
 Reload Foundry in an active GM browser session after copying the module files. The bridge pairs only after the sidecar validates the browser's authenticated Foundry session as a GM, then uses an in-memory per-client token that expires after 45 seconds of inactivity. No bridge credential belongs in the module source. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
 
 The HP preview route is read-only. The apply route requires both `FOUNDRY_WRITE_ENABLED=true` in the MCP client environment and the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP, but does not calculate typed damage or resistance, vulnerability, immunity, or activity automation.
+
+Temporary HP uses the same guarded workflow but is an explicit replacement: preview the exact value, then set it with the matching token. It accepts `0` to clear temporary HP and intentionally does not infer how a spell or feature should resolve competing temporary-HP grants.
 
 **Important:** The sidecar uses Docker build cache. If your changes don't seem to take effect, use `--no-cache`:
 ```bash

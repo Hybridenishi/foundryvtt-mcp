@@ -10,7 +10,7 @@ Hermes → MCP Server (stdio) → Sidecar (REST :30001) → Foundry (Socket.IO :
               Same-origin reverse proxy /mcp-bridge ↔ MCP Bridge module (active GM client)
 ```
 
-The **sidecar** runs alongside Foundry and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route. It also performs confirmation-guarded direct HP changes through the dnd5e Actor API.
+The **sidecar** runs alongside Foundry and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route. It also performs confirmation-guarded direct HP and temporary-HP changes through the dnd5e Actor API.
 
 **Auth method:** a private API key (`X-API-Key` header) between Hermes and the sidecar. The GM browser bridge does not use that key.
 
@@ -37,7 +37,7 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (29 total)
+## Tools (33 total)
 
 ### Read and service (21 tools)
 
@@ -71,18 +71,20 @@ mcp_servers:
 |---|---|
 | `roll_dice` | Any formula: `1d20+5`, `4d6kh3`, `d%`, `adv`, `dis` |
 
-### Previews (2 read-only tools)
+### Previews (3 read-only tools)
 
 | Tool | Description |
 |---|---|
 | `preview_hp_change` | Calculate direct damage/healing through the GM bridge and return a short-lived confirmation token; does not change Foundry |
+| `preview_temporary_hp` | Preview replacing temporary HP with an exact value through the GM bridge and return a short-lived confirmation token; does not change Foundry |
 | `preview_item_activity_use` | Read-only eligibility check for one exact, unambiguous embedded dnd5e utility activity with no external target; returns a short-lived confirmation token |
 
-### Write (7 tools, gated by `FOUNDRY_WRITE_ENABLED`)
+### Write (8 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
 | Tool | Description |
 |---|---|
 | `execute_item_activity_use` | Execute exactly one previewed dnd5e utility activity through the GM bridge; dnd5e controls consumption, effects, and chat output |
+| `set_temporary_hp` | Replace an actor's temporary HP with a previewed exact value through the GM bridge; use 0 to clear it |
 | `update_actor` | Patch actor system attributes (`system.hp.value`, `system.currency.gp`, etc.) |
 | `create_actor` | Create a minimal actor; use Plutonium for complete 5e characters and creatures |
 | `delete_actor` | Delete an actor by ID |
@@ -128,6 +130,8 @@ API_KEY=<private-sidecar-api-key>
 | GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e actor summary; requires an active GM client with the bridge module |
 | POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns one-time confirmation token |
 | POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
+| POST | `/api/mcp/actors/:id/temporary-hp/preview` | Read-only exact temporary-HP replacement preview; returns one-time confirmation token |
+| POST | `/api/mcp/actors/:id/temporary-hp` | Apply an exactly matching, previewed temporary-HP replacement through the active GM client |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview` | Validate one exact unambiguous dnd5e utility activity and issue a one-time confirmation token |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use` | Execute an exactly matching previewed dnd5e utility activity through the active GM client |
 
@@ -198,8 +202,8 @@ Create its release asset after validating the build:
 
 ```bash
 npm run package:module
-gh release create v1.5.0 release/foundry-mcp-bridge.zip module/module.json \
-  --title "MCP Bridge v1.5.0" --notes "Activity discovery for embedded D&D 5e activities, plus GM-session pairing and confirmation-guarded direct HP changes."
+gh release create v1.6.0 release/foundry-mcp-bridge.zip module/module.json \
+  --title "MCP Bridge v1.6.0" --notes "Confirmation-guarded temporary-HP replacement through the active GM bridge."
 ```
 
 The ZIP contains `module.json` and `scripts/` at its root, as required by Foundry's module installer.
