@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { applyConditionChange, applyHpChange, executeUtilityActivityUse, previewConditionChange, previewHpChange, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
+import { applyConditionChange, applyHpChange, applySpellSlotAdjustment, executeUtilityActivityUse, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -29,7 +29,7 @@ test("summarizePreparedActor preserves client-prepared combat values", () => {
   assert.equal(summary.abilities.wis.mod, 3);
   assert.deepEqual(summary.spellSlots.spell1, { value: 3, max: 4, override: null });
   assert.deepEqual(summary.spellSlots.spell8, { value: 1, max: 1, override: null });
-  assert.equal(summary.spellSlots.pact, undefined);
+  assert.deepEqual(summary.spellSlots.pact, { value: 0, max: 0, override: null });
 });
 
 test("previewHpChange accounts for temporary HP and caps healing", () => {
@@ -296,4 +296,256 @@ test("utility activity execution delegates to dnd5e and reports observed changes
   assert.equal(result.result.message.id, "message-1");
   assert.equal(result.result.dnd5eUpdates.activity.uses.spent, 1);
   assert.deepEqual(result.observedResourceChanges.activityUses, { before: { spent: 0, max: 1 }, after: { spent: 1, max: 1 } });
+});
+
+// --- Spell Slot Adjustment Tests ---
+
+function spellcasterFixture(overrides = {}) {
+  return {
+    id: "caster-1",
+    name: "Test Caster",
+    type: "character",
+    system: {
+      spells: {
+        spell1: { value: 4, max: 4, override: null },
+        spell3: { value: 3, max: 3, override: null },
+        pact: { value: 2, max: 2, override: null },
+        ...overrides,
+      },
+    },
+  };
+}
+
+test("previewSpellSlotAdjustment returns before/after for valid single adjustment", () => {
+  const actor = spellcasterFixture();
+  const preview = previewSpellSlotAdjustment(actor, {
+    adjustments: [{ slot: "spell1", value: 3 }],
+  });
+  assert.equal(preview.operation, "adjust-spell-slots");
+  assert.equal(preview.adjustments.length, 1);
+  assert.deepEqual(preview.adjustments[0].before, { slot: "spell1", value: 4, max: 4, override: null });
+  assert.deepEqual(preview.adjustments[0].after, { slot: "spell1", value: 3, max: 4, override: null });
+  assert.ok(preview.selectedSlots, "preview must include internal selectedSlots field");
+});
+
+test("previewSpellSlotAdjustment supports pact magic", () => {
+  const actor = spellcasterFixture();
+  const preview = previewSpellSlotAdjustment(actor, {
+    adjustments: [{ slot: "pact", value: 1 }],
+  });
+  assert.equal(preview.adjustments[0].slot, "pact");
+  assert.equal(preview.adjustments[0].before.value, 2);
+  assert.equal(preview.adjustments[0].after.value, 1);
+});
+
+test("previewSpellSlotAdjustment supports multi-slot adjustment", () => {
+  const actor = spellcasterFixture();
+  const preview = previewSpellSlotAdjustment(actor, {
+    adjustments: [
+      { slot: "spell1", value: 2 },
+      { slot: "pact", value: 0 },
+    ],
+  });
+  assert.equal(preview.adjustments.length, 2);
+  // Sorted by slot
+  assert.equal(preview.adjustments[0].slot, "pact");
+  assert.equal(preview.adjustments[1].slot, "spell1");
+});
+
+test("previewSpellSlotAdjustment rejects non-character actors", () => {
+  const actor = { ...spellcasterFixture(), type: "npc" };
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell1", value: 3 }] }),
+    /character actors only/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects invalid slot names", () => {
+  const actor = spellcasterFixture();
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell0", value: 3 }] }),
+    /slot must be pact or spell1 through spell9/,
+  );
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell10", value: 3 }] }),
+    /slot must be pact or spell1 through spell9/,
+  );
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "mana", value: 3 }] }),
+    /slot must be pact or spell1 through spell9/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects duplicate slots", () => {
+  const actor = spellcasterFixture();
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, {
+      adjustments: [
+        { slot: "spell1", value: 3 },
+        { slot: "spell1", value: 2 },
+      ],
+    }),
+    /Duplicate slot/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects empty adjustments array", () => {
+  const actor = spellcasterFixture();
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [] }),
+    /non-empty array/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects value exceeding max", () => {
+  const actor = spellcasterFixture();
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell1", value: 5 }] }),
+    /exceeds its prepared maximum/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects no-op (value unchanged)", () => {
+  const actor = spellcasterFixture();
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell1", value: 4 }] }),
+    /unchanged/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects zero-max pool", () => {
+  const actor = spellcasterFixture({ spell2: { value: 0, max: 0, override: null } });
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell2", value: 0 }] }),
+    /no available slots.*max is 0/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects unavailable pool", () => {
+  const actor = spellcasterFixture();
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell7", value: 0 }] }),
+    /unavailable/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects unknown adjustment fields", () => {
+  const actor = spellcasterFixture();
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell1", value: 3, extra: true }] }),
+    /only slot and value/,
+  );
+});
+
+test("previewSpellSlotAdjustment rejects non-integer values", () => {
+  const actor = spellcasterFixture();
+  assert.throws(
+    () => previewSpellSlotAdjustment(actor, { adjustments: [{ slot: "spell1", value: 1.5 }] }),
+    /integer/,
+  );
+});
+
+test("applySpellSlotAdjustment updates slots and returns read-back receipt", async () => {
+  const actor = {
+    ...spellcasterFixture(),
+    async update(data) {
+      for (const [path, val] of Object.entries(data)) {
+        const parts = path.split(".");
+        // path = "system.spells.spell1.value"
+        this.system.spells[parts[2]].value = val;
+      }
+    },
+  };
+  const result = await applySpellSlotAdjustment(actor, {
+    adjustments: [{ slot: "spell1", value: 2 }],
+    expectedSelectedStateKey: JSON.stringify([{ slot: "spell1", value: 4, max: 4, override: null }]),
+  });
+  assert.equal(result.before.length, 1);
+  assert.deepEqual(result.before[0].before, { slot: "spell1", value: 4, max: 4, override: null });
+  assert.equal(result.after[0].slot, "spell1");
+  assert.equal(result.after[0].value, 2);
+});
+
+test("applySpellSlotAdjustment rejects stale state (value changed since preview)", async () => {
+  const actor = {
+    ...spellcasterFixture(),
+    async update() {},
+  };
+  // Actor currently has spell1=2, but token says it was 4 at preview time
+  actor.system.spells.spell1.value = 2;
+  await assert.rejects(
+    () => applySpellSlotAdjustment(actor, {
+      adjustments: [{ slot: "spell1", value: 1 }],
+      expectedSelectedStateKey: JSON.stringify([{ slot: "spell1", value: 4, max: 4, override: null }]),
+    }),
+    /state changed since preview/,
+  );
+});
+
+test("applySpellSlotAdjustment rejects stale max", async () => {
+  const actor = {
+    ...spellcasterFixture(),
+    async update() {},
+  };
+  actor.system.spells.spell1.max = 5;
+  await assert.rejects(
+    () => applySpellSlotAdjustment(actor, {
+      adjustments: [{ slot: "spell1", value: 3 }],
+      expectedSelectedStateKey: JSON.stringify([{ slot: "spell1", value: 4, max: 4, override: null }]),
+    }),
+    /state changed since preview/,
+  );
+});
+
+test("applySpellSlotAdjustment rejects if update unavailable", async () => {
+  const actor = { ...spellcasterFixture() }; // no update method
+  await assert.rejects(
+    () => applySpellSlotAdjustment(actor, {
+      adjustments: [{ slot: "spell1", value: 3 }],
+      expectedSelectedStateKey: JSON.stringify([{ slot: "spell1", value: 4, max: 4, override: null }]),
+    }),
+    /Actor.update method is unavailable/,
+  );
+});
+
+test("applySpellSlotAdjustment rejects mismatched read-back", async () => {
+  const actor = {
+    ...spellcasterFixture(),
+    async update(data) {
+      // Don't actually update — read-back will fail
+    },
+  };
+  await assert.rejects(
+    () => applySpellSlotAdjustment(actor, {
+      adjustments: [{ slot: "spell1", value: 2 }],
+      expectedSelectedStateKey: JSON.stringify([{ slot: "spell1", value: 4, max: 4, override: null }]),
+    }),
+    /does not match/,
+  );
+});
+
+test("applySpellSlotAdjustment multi-slot update works atomically", async () => {
+  const actor = {
+    ...spellcasterFixture(),
+    async update(data) {
+      for (const [path, val] of Object.entries(data)) {
+        const parts = path.split(".");
+        this.system.spells[parts[2]].value = val;
+      }
+    },
+  };
+  const result = await applySpellSlotAdjustment(actor, {
+    adjustments: [
+      { slot: "spell1", value: 1 },
+      { slot: "pact", value: 0 },
+    ],
+    expectedSelectedStateKey: JSON.stringify([
+      { slot: "pact", value: 2, max: 2, override: null },
+      { slot: "spell1", value: 4, max: 4, override: null },
+    ]),
+  });
+  assert.equal(result.before.length, 2);
+  assert.equal(result.after.length, 2);
+  assert.equal(actor.system.spells.spell1.value, 1);
+  assert.equal(actor.system.spells.pact.value, 0);
 });

@@ -22,6 +22,7 @@ function consumeConfirmation(confirmations, token, binding, errorLabel, now = Da
   }
 
   confirmations.delete(token);
+  return confirmation;
 }
 
 module.exports = { consumeConfirmation, issueConfirmation, pruneExpired };

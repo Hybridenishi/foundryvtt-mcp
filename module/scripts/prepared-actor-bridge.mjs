@@ -17,7 +17,7 @@ function summarizeAbilities(abilities = {}) {
 function summarizeSpellSlots(spells = {}) {
   return Object.fromEntries(
     Object.entries(spells)
-      .filter(([key, slot]) => /^spell[1-9]$/.test(key) && slot && typeof slot === "object")
+      .filter(([key, slot]) => (/^spell[1-9]$/.test(key) || key === "pact") && slot && typeof slot === "object")
       .map(([key, slot]) => [key, {
         value: numberOrNull(slot.value),
         max: numberOrNull(slot.max),
@@ -229,6 +229,103 @@ export async function applyHpChange(actor, request) {
   };
 }
 
+const SLOT_IDS = new Set(["pact", ...Array.from({ length: 9 }, (_, i) => `spell${i + 1}`)]);
+
+function readPreparedSlot(actor, slotKey) {
+  const pool = actor?.system?.spells?.[slotKey];
+  if (!pool || typeof pool !== "object") return null;
+  return {
+    slot: slotKey,
+    value: numberOrNull(pool.value),
+    max: numberOrNull(pool.max),
+    override: numberOrNull(pool.override),
+  };
+}
+
+function selectedStateKey(selectedSlots) {
+  return JSON.stringify(selectedSlots.map(({ slot, value, max, override }) => ({
+    slot, value, max, override,
+  })));
+}
+
+function validateSlotAdjustments(actor, request) {
+  if (actor.type !== "character") throw new Error("Spell slot adjustment supports character actors only.");
+  const adjustments = request?.adjustments;
+  if (!Array.isArray(adjustments) || adjustments.length === 0) throw new Error("adjustments must be a non-empty array.");
+
+  const seen = new Set();
+  const canonical = adjustments.map((adjustment) => {
+    if (!adjustment || Object.keys(adjustment).some((key) => key !== "slot" && key !== "value")) {
+      throw new Error("Each adjustment must contain only slot and value.");
+    }
+    const { slot, value } = adjustment;
+    if (!SLOT_IDS.has(slot)) throw new Error(`slot must be pact or spell1 through spell9, got '${slot}'.`);
+    if (!Number.isInteger(value) || value < 0 || value > 100_000) throw new Error("value must be an integer between 0 and 100000.");
+    if (seen.has(slot)) throw new Error(`Duplicate slot '${slot}'.`);
+    seen.add(slot);
+
+    const pool = actor.system?.spells?.[slot];
+    if (!pool || typeof pool !== "object") throw new Error(`Spell-slot pool '${slot}' is unavailable.`);
+    const current = { slot, value: pool.value, max: pool.max, override: pool.override ?? null };
+    if (![current.value, current.max].every(Number.isInteger) || current.value < 0 || current.max < 0 || (current.override !== null && !Number.isInteger(current.override))) {
+      throw new Error(`Spell-slot pool '${slot}' is not valid prepared state.`);
+    }
+    if (current.max === 0) throw new Error(`Spell-slot pool '${slot}' has no available slots (max is 0).`);
+    if (value > current.max) throw new Error(`Requested ${slot} value (${value}) exceeds its prepared maximum (${current.max}).`);
+    if (value === current.value) throw new Error(`Requested ${slot} value (${value}) is unchanged from current.`);
+    return { requested: { slot, value }, current };
+  });
+  return canonical.sort((a, b) => a.requested.slot.localeCompare(b.requested.slot));
+}
+
+export function previewSpellSlotAdjustment(actor, request) {
+  const entries = validateSlotAdjustments(actor, request);
+  const selectedSlots = entries.map((e) => e.current);
+  return {
+    actorId: actor.id ?? actor._id ?? null,
+    actorName: actor.name ?? "Unnamed actor",
+    operation: "adjust-spell-slots",
+    rulesNote: "This is a direct administrative spell-slot counter adjustment. It does not cast a spell, validate spellcasting requirements, check concentration, select activities, or create chat output. For actual spell use through dnd5e, use item activity execution.",
+    adjustments: entries.map(({ requested, current }) => ({
+      slot: requested.slot,
+      before: current,
+      after: { ...current, value: requested.value },
+    })),
+    selectedSlots,
+  };
+}
+
+export async function applySpellSlotAdjustment(actor, request) {
+  const entries = validateSlotAdjustments(actor, request);
+  const actualStateKey = selectedStateKey(entries.map((e) => e.current));
+  if (actualStateKey !== request.expectedSelectedStateKey) {
+    throw new Error("Spell slot state changed since preview. Preview the operation again.");
+  }
+
+  const before = entries.map(({ requested, current }) => ({ slot: requested.slot, before: current }));
+  const update = Object.fromEntries(entries.map(({ requested }) => [
+    `system.spells.${requested.slot}.value`, requested.value,
+  ]));
+  if (typeof actor.update !== "function") throw new Error("The Foundry Actor.update method is unavailable.");
+  await actor.update(update);
+
+  const after = entries.map(({ requested }) => readPreparedSlot(actor, requested.slot));
+  for (const slot of after) {
+    const req = entries.find(({ requested }) => requested.slot === slot.slot)?.requested;
+    if (!req || slot.value !== req.value) {
+      throw new Error(`Read-back for '${slot.slot}' does not match the requested value.`);
+    }
+  }
+  return {
+    actorId: actor.id ?? actor._id ?? null,
+    actorName: actor.name ?? "Unnamed actor",
+    operation: "adjust-spell-slots",
+    rulesNote: "This is a direct administrative spell-slot counter adjustment. It does not cast a spell, validate spellcasting requirements, check concentration, select activities, or create chat output. For actual spell use through dnd5e, use item activity execution.",
+    before,
+    after,
+  };
+}
+
 function validateTemporaryHp(request) {
   const amount = request?.amount;
   if (!Number.isInteger(amount) || amount < 0 || amount > 100_000) {
@@ -418,6 +515,10 @@ async function handleBridgeRequest(request) {
       return previewConditionChange(actor, request);
     case "apply-condition-change":
       return applyConditionChange(actor, request);
+    case "preview-spell-slot-adjustment":
+      return previewSpellSlotAdjustment(actor, request);
+    case "apply-spell-slot-adjustment":
+      return applySpellSlotAdjustment(actor, request);
     case "preview-utility-activity-use":
       return previewUtilityActivityUse(actor, request);
     case "use-utility-activity":
