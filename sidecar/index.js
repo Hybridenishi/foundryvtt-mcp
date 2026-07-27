@@ -273,10 +273,13 @@ function issueSpellSlotAdjustmentConfirmation(actorId, adjustments, selectedSlot
 }
 
 function consumeSpellSlotAdjustmentConfirmation(token, actorId, adjustments) {
+  // Consume with only identifying fields (actorId, operation, adjustmentsKey).
+  // The stored binding also contains selectedStateKey, which we return to pass
+  // as a trusted fingerprint to the bridge.
   return consumeConfirmation(
     spellSlotAdjustmentConfirmations,
     token,
-    spellSlotAdjustmentBinding(actorId, adjustments, []), // selectedSlots not needed for consume — only adjustmentsKey + actorId + operation are compared
+    { actorId, operation: "adjust-spell-slots", adjustmentsKey: adjustmentsKey(adjustments) },
     "spell-slot-adjustment",
   );
 }
@@ -716,7 +719,7 @@ app.post("/api/mcp/actors/:id/spell-slots", requireWriteEnabled, async (req, res
     });
     res.json({ ok: true, ...result });
   } catch (e) {
-    const status = e.message.includes("confirmation") || e.message.includes("token") || e.message.includes("stale") ? 409
+    const status = e.message.includes("confirmation") || e.message.includes("token") || e.message.includes("state changed") ? 409
       : e.message.includes("adjustments") || e.message.includes("slot") || e.message.includes("value") ? 400 : 500;
     res.status(status).json({ error: e.message });
   }

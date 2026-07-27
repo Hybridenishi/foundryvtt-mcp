@@ -34,6 +34,8 @@ Every mutation follows the pattern established by `apply_hp_change` and `execute
 
 The five legacy writes (`update_actor`, `create_actor`, `delete_actor`, `next_turn`, `create_chat_message`) predate this pattern and still use raw `modifyDocument`. Do not copy them; see Phase 1.
 
+**Spell slot adjustment is an intentional exception:** `apply_spell_slot_adjustment` uses `actor.update()` rather than a dnd5e API because dnd5e has no dedicated spell-slot mutation API — slots are data properties on the Actor document. Calling `actor.update()` fires the same document hooks that a player editing the sheet would fire, so modules like `midi-qol` and `dae` observe the change. This is deliberately an administrative counter adjustment, not spell casting; item activity execution remains the path for actual spell use.
+
 ## Secrets
 
 Credentials come from private environment configuration only. Never commit them, include them in examples, or serve them to browser clients. Tests scan source files to assert that shared credential strings are absent — keep it that way.
