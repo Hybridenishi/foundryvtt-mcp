@@ -267,7 +267,7 @@ function validateSlotAdjustments(actor, request) {
     const pool = actor.system?.spells?.[slot];
     if (!pool || typeof pool !== "object") throw new Error(`Spell-slot pool '${slot}' is unavailable.`);
     const current = { slot, value: pool.value, max: pool.max, override: pool.override ?? null };
-    if (![current.value, current.max].every(Number.isInteger) || current.value < 0 || current.max < 0 || (current.override !== null && !Number.isInteger(current.override))) {
+    if (![current.value, current.max].every(Number.isInteger) || current.value < 0 || current.max < 0 || current.value > current.max || (current.override !== null && !Number.isInteger(current.override))) {
       throw new Error(`Spell-slot pool '${slot}' is not valid prepared state.`);
     }
     if (current.max === 0) throw new Error(`Spell-slot pool '${slot}' has no available slots (max is 0).`);

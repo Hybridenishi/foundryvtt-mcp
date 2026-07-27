@@ -68,7 +68,8 @@ All Tier A, all through the GM bridge, all following the established mutation pa
 - [ ] **Rests** — short and long rest through `dnd5e`, with `dialog: false` and hit-dice spending as an explicit input, since no GM is present to answer a prompt. Pin the API signature; it moved across 5.x.
 - [ ] **Combat control** — replace the sidecar-computed turn advance with `Combat#nextTurn()`, and add `Combat#setInitiative()`, initiative rolling, previous turn, and combat start/end.
 - [x] **Typed damage** — `Actor.applyDamage` accepts typed damage. Wired through with strict enum validation at all three layers; `damageType` on `preview_hp_change` / `apply_hp_change` triggers full resistance/vulnerability/immunity calculation.
-- [x] **Spell slots and resources** — adjust slots (including pact magic, now included in prepared summaries) and limited-use resources.
+- [x] **Spell slots** — adjust slots (including pact magic, now included in prepared summaries). Administrative counter adjustment through the GM bridge with canonical binding and stale-state protection.
+- [ ] **Limited-use resources** — adjust item uses, class feature uses, and other limited-use counters.
 - [x] **Party overview** — one prepared call returns HP, AC, conditions, and slots for all character actors.
 
 **Exit:** common combat and recovery operations run through `dnd5e` with verifiable receipts.
