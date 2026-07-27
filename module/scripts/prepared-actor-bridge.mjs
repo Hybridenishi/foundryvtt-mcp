@@ -92,17 +92,27 @@ function hpValue(value) {
 function validateHpChange(request) {
   const mode = request?.mode;
   const amount = request?.amount;
+  const damageType = request?.damageType ?? null;
   if (mode !== "damage" && mode !== "healing") {
     throw new Error("HP change mode must be 'damage' or 'healing'.");
   }
   if (!Number.isInteger(amount) || amount < 1 || amount > 100_000) {
     throw new Error("HP change amount must be an integer between 1 and 100000.");
   }
-  return { mode, amount };
+  if (damageType !== null && typeof damageType !== "string") {
+    throw new Error("damageType must be a string when provided.");
+  }
+  if (damageType !== null && damageType.length === 0) {
+    throw new Error("damageType must not be empty when provided.");
+  }
+  if (damageType !== null && mode !== "damage") {
+    throw new Error("damageType is only valid for damage mode, not healing.");
+  }
+  return { mode, amount, damageType };
 }
 
 export function previewHpChange(actor, request) {
-  const { mode, amount } = validateHpChange(request);
+  const { mode, amount, damageType } = validateHpChange(request);
   const hp = actor?.system?.attributes?.hp;
   if (!hp || !Number.isFinite(hp.value) || !Number.isFinite(hp.max)) {
     throw new Error("This actor does not have prepared current and maximum HP.");
@@ -124,13 +134,18 @@ export function previewHpChange(actor, request) {
     tempmax: before.tempmax,
   };
 
+  const rulesNote = damageType
+    ? `Typed ${damageType} damage uses dnd5e Actor.applyDamage with damage type; resistance, vulnerability, and immunity are calculated by the dnd5e system.`
+    : "Direct HP damage/healing uses dnd5e Actor.applyDamage with no damage type; resistance, vulnerability, and immunity are not calculated.";
+
   return {
     actorId: actor.id ?? actor._id ?? null,
     actorName: actor.name ?? "Unnamed actor",
     mode,
     requestedAmount: amount,
+    ...(damageType ? { damageType } : {}),
     directHpChange: true,
-    rulesNote: "Direct HP damage/healing uses dnd5e Actor.applyDamage with no damage type; resistance, vulnerability, and immunity are not calculated.",
+    rulesNote,
     before,
     after,
     appliedToTemp: tempAbsorbed,
@@ -141,12 +156,16 @@ export function previewHpChange(actor, request) {
   };
 }
 
-async function applyHpChange(actor, request) {
+export async function applyHpChange(actor, request) {
   const preview = previewHpChange(actor, request);
   if (typeof actor.applyDamage !== "function") {
     throw new Error("The installed dnd5e Actor.applyDamage method is unavailable.");
   }
-  await actor.applyDamage(request.mode === "damage" ? request.amount : -request.amount);
+  if (request.mode === "damage" && request.damageType) {
+    await actor.applyDamage([{ value: request.amount, type: request.damageType }]);
+  } else {
+    await actor.applyDamage(request.mode === "damage" ? request.amount : -request.amount);
+  }
   return {
     ...preview,
     after: summarizePreparedActor(actor).hp,

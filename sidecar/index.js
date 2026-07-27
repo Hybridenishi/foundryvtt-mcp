@@ -121,13 +121,23 @@ function requestPreparedActor(actorId) {
 function parseHpChange(body) {
   const mode = body?.mode;
   const amount = body?.amount;
+  const damageType = body?.damageType ?? null;
   if (mode !== "damage" && mode !== "healing") {
     throw new Error("mode must be 'damage' or 'healing'");
   }
   if (!Number.isInteger(amount) || amount < 1 || amount > 100_000) {
     throw new Error("amount must be an integer between 1 and 100000");
   }
-  return { mode, amount };
+  if (damageType !== null && typeof damageType !== "string") {
+    throw new Error("damageType must be a string when provided");
+  }
+  if (damageType !== null && damageType.length === 0) {
+    throw new Error("damageType must not be empty when provided");
+  }
+  if (damageType !== null && mode !== "damage") {
+    throw new Error("damageType is only valid for damage mode, not healing");
+  }
+  return { mode, amount, ...(damageType ? { damageType } : {}) };
 }
 
 function issueHpChangeConfirmation(actorId, change) {

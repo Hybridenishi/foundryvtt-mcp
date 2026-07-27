@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { applyConditionChange, executeUtilityActivityUse, previewConditionChange, previewHpChange, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
+import { applyConditionChange, applyHpChange, executeUtilityActivityUse, previewConditionChange, previewHpChange, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -47,6 +47,53 @@ test("previewHpChange accounts for temporary HP and caps healing", () => {
   const healing = previewHpChange(actor, { mode: "healing", amount: 10 });
   assert.deepEqual(healing.after, { value: 12, max: 12, temp: 3, tempmax: 0 });
   assert.equal(healing.unspentAmount, 5);
+});
+
+test("previewHpChange with damageType includes type in output and rulesNote", () => {
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 20, max: 20, temp: 0, tempmax: 0 } } },
+  };
+
+  const fire = previewHpChange(actor, { mode: "damage", amount: 10, damageType: "fire" });
+  assert.equal(fire.damageType, "fire");
+  assert.match(fire.rulesNote, /Typed fire damage/);
+  assert.match(fire.rulesNote, /resistance, vulnerability, and immunity are calculated/);
+
+  // Untyped: no damageType field, old rulesNote
+  const untyped = previewHpChange(actor, { mode: "damage", amount: 10 });
+  assert.equal(untyped.damageType, undefined);
+  assert.match(untyped.rulesNote, /not calculated/);
+});
+
+test("validateHpChange rejects damageType on healing mode", () => {
+  assert.throws(
+    () => previewHpChange({ system: { attributes: { hp: { value: 10, max: 10 } } } }, { mode: "healing", amount: 5, damageType: "fire" }),
+    /only valid for damage mode/,
+  );
+});
+
+test("applyHpChange with damageType calls applyDamage with typed array", async () => {
+  let appliedDamage = null;
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 20, max: 20, temp: 0, tempmax: 0 } } },
+    async applyDamage(damages) {
+      appliedDamage = damages;
+      this.system.attributes.hp.value = 10; // simulate resistance halving
+    },
+  };
+
+  const result = await applyHpChange(actor, { mode: "damage", amount: 10, damageType: "fire" });
+  assert.deepEqual(appliedDamage, [{ value: 10, type: "fire" }]);
+  assert.equal(result.damageType, "fire");
+
+  // Untyped: still passes a number (backward compatible)
+  appliedDamage = null;
+  await applyHpChange(actor, { mode: "healing", amount: 5 });
+  assert.equal(appliedDamage, -5);
 });
 
 test("temporary HP preview is explicit and setting it returns prepared readback", async () => {
