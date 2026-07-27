@@ -1,6 +1,6 @@
 # Foundry VTT MCP Server — Custom Build Spec
 
-> **Historical design note:** This is the original implementation plan. For current public deployment and security guidance, use `README.md` and `PRIMER.md`.
+> **Historical design note:** This is the original implementation plan. For current public deployment and security guidance, use [`../README.md`](../README.md) and [`PRIMER.md`](PRIMER.md).
 
 **Architecture:** Node.js MCP server (stdio transport powered by `@modelcontextprotocol/sdk`) that authenticates with Foundry v14 via a proven 4-step Socket.IO flow, loads world data into memory, and exposes a focused set of read/write/dice tools.
 

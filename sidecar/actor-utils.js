@@ -288,10 +288,10 @@ function summarizeActivityDetails(item, activity) {
     })),
     execution: {
       supported: false,
-      note: "Activity execution is not implemented. This endpoint is discovery-only and does not roll, create chat messages, consume resources, or change Foundry data.",
+      note: "This endpoint is discovery-only: it does not roll, create chat messages, consume resources, or change Foundry data. dnd5e utility activities do execute for real, through the separate preview_item_activity_use / execute_item_activity_use tools; other activity types have no execution path yet.",
     },
     cautions: [
-      "Activity configuration is not execution. Use the dnd5e activity result once activity execution is implemented to determine final resource costs and roll outcomes.",
+      "Activity configuration is not execution. For a dnd5e utility activity, use preview_item_activity_use and execute_item_activity_use to determine final resource costs and roll outcomes; other activity types are discovery-only for now.",
     ],
   };
 }

@@ -15,7 +15,7 @@ Two-layer bridge:
 |-------|----------|------|------|
 | **MCP Server** | Your MCP client's configured server directory | `src/` | TypeScript MCP server. It runs as a child process over stdio, registers tools (`search_actors`, `create_actor`, etc.), and calls the sidecar over HTTP. |
 | **Sidecar** | Your Foundry host's Docker deployment (`foundry-sidecar`, port 30001 by default) | `sidecar/` | Express proxy. Authenticates with Foundry via Socket.IO (4-step handshake), then exposes REST endpoints. All writes go through `socket.emit("modifyDocument", ...)`. |
-| **MCP Bridge module** | Foundry data: `modules/foundry-mcp-bridge/` | Same repo, `module/` | Runs in an active GM's Foundry browser client and returns prepared, runtime-derived Actor values through the same-origin `/mcp-bridge` HTTP route. It also performs narrowly confirmation-guarded HP and temporary-HP changes. |
+| **MCP Bridge module** | Foundry data: `modules/foundry-mcp-bridge/` | Same repo, `module/` | Runs in an active GM's Foundry browser client and returns prepared, runtime-derived Actor values through the same-origin `/mcp-bridge` HTTP route. It also performs narrowly confirmation-guarded HP, temporary-HP, standard-condition, spell-slot, and utility-activity-execution changes. |
 
 ## Repo: `github.com/Hybridenishi/foundryvtt-mcp`
 
@@ -23,24 +23,37 @@ Two-layer bridge:
 ├── src/                    # MCP server (TypeScript)
 │   ├── index.ts            # Entry point, tool registration
 │   ├── client.ts           # HTTP client (axios) → sidecar
-│   ├── types.ts            # Zod schemas
 │   ├── logger.ts           # stderr logger
+│   ├── register.test.ts    # Tool-registration test (compiled to dist/, run via `npm test`)
 │   └── tools/
 │       ├── read.ts         # search_actors, get_actor, search_items, etc.
-│       ├── write.ts        # create_actor, delete_actor, update_actor, chat
+│       ├── write.ts        # preview/apply tools, plus the legacy raw writes
 │       └── dice.ts         # roll_dice (rpg-dice-roller)
 ├── sidecar/                # Express sidecar (plain JS)
-│   ├── index.js            # Main server — modifyDocument protocol
-│   ├── Dockerfile          # Node:22-alpine
-│   └── package.json
+│   ├── index.js            # Env parsing, Foundry Socket.IO auth/connection lifecycle, listen()
+│   ├── app.js               # createApp(deps) — the Express route table, independent of a live Foundry
+│   ├── confirmations.js     # Per-operation request validators + confirmation-token issue/consume wrappers
+│   ├── confirmation.js      # The generic confirmation primitive: binding/payload storage and symmetric matching
+│   ├── actor-utils.js       # Raw-actor summarization and pagination helpers
+│   ├── bridge-auth.js       # Constant-time bridge-token comparison
+│   ├── *.test.js             # node --test unit and route tests for the files above
+│   ├── package-lock.json    # Tracked so the Dockerfile's `npm ci` is reproducible on a fresh host
+│   └── Dockerfile          # Node:22-alpine
 ├── module/                 # Foundry v14 client-side MCP Bridge module
 │   ├── module.json
-│   └── scripts/prepared-actor-bridge.mjs
+│   ├── scripts/prepared-actor-bridge.mjs
+│   └── scripts/prepared-actor-bridge.test.mjs
 ├── traefik/                # Optional Traefik example for the same-origin bridge route
 │   └── foundry-mcp-bridge.yml
-├── ROADMAP.md              # Planned work, by phase
-├── FINDINGS.md             # Deployment inspection data and architectural findings
-├── SPEC.md                 # Original implementation plan (historical)
+├── tests/                  # Natural-language agent-behavior scenarios; see tests/README.md
+│   ├── scenarios/
+│   └── regressions/
+├── docs/
+│   ├── ROADMAP.md          # Planned work, by phase
+│   ├── FINDINGS.md         # Deployment inspection data and architectural findings
+│   ├── SPEC.md             # Original implementation plan (historical)
+│   └── PRIMER.md           # This file
+├── spell-slot-management-spec.md  # Design spec for the spell-slot feature
 └── AGENTS.md               # Claude/AI instructions
 ```
 
@@ -67,43 +80,7 @@ curl -s -H "X-API-Key: <private-sidecar-api-key>" \
 
 ### Endpoints available on sidecar (:30001)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/mcp/refresh` | Health check |
-| POST | `/api/mcp/refresh` | Refresh current world snapshot |
-| GET | `/api/mcp/world-summary` | Actor/scene/item counts |
-| GET | `/api/mcp/system-info` | Foundry/system metadata, modules, and prepared-bridge responders |
-| GET | `/api/mcp/actors` | List actors (?query, ?type, ?limit) |
-| GET | `/api/mcp/actors/:id` | Raw actor without Items by default (`?includeItems=true` for debugging) |
-| GET | `/api/mcp/actors/:id/5e-summary` | Concise D&D 5e actor summary |
-| GET | `/api/mcp/actors/:id/prepared` | Prepared D&D 5e summary; requires active GM browser bridge |
-| GET | `/api/mcp/party/prepared` | Prepared concise overview of all character actors; requires active GM browser bridge |
-| POST | `/api/mcp/actors/:id/hp-change/preview` | Read-only direct HP damage/healing preview; returns a short-lived confirmation token |
-| POST | `/api/mcp/actors/:id/hp-change` | Apply an exactly matching, previewed direct HP change through the active GM client |
-| POST | `/api/mcp/actors/:id/temporary-hp/preview` | Read-only exact temporary-HP replacement preview; returns a one-time confirmation token |
-| POST | `/api/mcp/actors/:id/temporary-hp` | Apply an exactly matching, previewed temporary-HP replacement through the active GM client |
-| POST | `/api/mcp/actors/:id/conditions/preview` | Read-only standard-condition change preview; returns a one-time confirmation token |
-| POST | `/api/mcp/actors/:id/conditions` | Apply an exactly matching, previewed standard-condition change through the active GM client |
-| GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
-| GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
-| GET | `/api/mcp/actors/:id/items/:itemId/activities/:activityId` | Discovery-only detail for one embedded Activity |
-| POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview` | Validate one exact unambiguous dnd5e utility activity; returns a short-lived confirmation token |
-| POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use` | Execute an exactly matching previewed utility activity through the active GM client |
-| GET | `/api/mcp/actors/:id/5e-validation` | 5e actor validation report |
-| POST | `/api/mcp/actors/create` | Create actor `{name, type?, system?}` |
-| POST | `/api/mcp/actors/:id/update` | Update `{system: {...}}` |
-| POST | `/api/mcp/actors/:id/delete` | Delete actor |
-| GET | `/api/mcp/items` | List items |
-| GET | `/api/mcp/items/:id` | Single world-level item |
-| GET | `/api/mcp/scenes` | List scenes |
-| GET | `/api/mcp/scenes/:id/tokens` | Tokens on a scene |
-| GET | `/api/mcp/combats/active` | Combat state |
-| POST | `/api/mcp/combats/next-turn` | Advance combat |
-| GET | `/api/mcp/chat-log` | Chat messages |
-| POST | `/api/mcp/chat` | Post to chat `{content, type?}` |
-| GET | `/api/mcp/journal` | Journal entries |
-| GET | `/api/mcp/journal/:id` | One journal entry with pages |
-| GET | `/api/mcp/users` | User list |
+See [`README.md`'s "Endpoints (sidecar)" table](../README.md#endpoints-sidecar) for the full, current route list — kept in exactly one place so it can't drift out of sync with itself across two files. Route handlers themselves live in `sidecar/app.js`.
 
 ### Repeatable deploy and smoke checks
 
@@ -117,11 +94,15 @@ After the deploy, hard-refresh Foundry in an active GM browser session, then run
 
 Reload Foundry in an active GM browser session after copying the module files. The bridge pairs only after the sidecar validates the browser's authenticated Foundry session as a GM, then uses an in-memory per-client token that expires after 45 seconds of inactivity. No bridge credential belongs in the module source. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
 
-The HP preview route is read-only. The apply route requires `FOUNDRY_WRITE_ENABLED=true` in both the MCP client and sidecar environments, plus the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP, but does not calculate typed damage or resistance, vulnerability, immunity, or activity automation.
+The HP preview route is read-only. The apply route requires `FOUNDRY_WRITE_ENABLED=true` in both the MCP client and sidecar environments, plus the exact, unexpired confirmation token returned by its preview. Direct damage uses dnd5e's `Actor.applyDamage`, including temporary HP; an optional `damageType` triggers dnd5e's own resistance, vulnerability, and immunity calculation, otherwise the damage is untyped. Neither path runs activity automation.
 
 Temporary HP uses the same guarded workflow but is an explicit replacement: preview the exact value, then set it with the matching token. It accepts `0` to clear temporary HP and intentionally does not infer how a spell or feature should resolve competing temporary-HP grants.
 
 Standard conditions use the same preview-and-apply guard through Foundry's `Actor.toggleStatusEffect`; generic condition changes deliberately refuse exhaustion because it has edition-sensitive levels.
+
+Spell-slot adjustment follows the same shape but is an intentional exception to the dnd5e-API rule: it uses `actor.update()` directly, since dnd5e has no dedicated spell-slot mutation API. It is exact-value only (not deltas), character actors only, and the apply step additionally rejects if the actor's slot state changed since the matching preview — see `AGENTS.md`'s "Write pattern" section for why.
+
+Utility-activity execution (`preview_item_activity_use` / `execute_item_activity_use`) is narrower than the other guarded writes: it only supports unambiguous, self-targeted dnd5e utility activities with no external target, template, scaling, spell slot, or concentration requirement, and the actor must have a token on an active scene. `Activity#use()` runs for real through the GM client, so dnd5e — not this bridge — owns validation, resource consumption, effects, and chat output.
 
 **Important:** The sidecar uses Docker build cache. If your changes don't seem to take effect, use `--no-cache`:
 ```bash
