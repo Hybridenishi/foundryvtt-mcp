@@ -26,6 +26,17 @@ function summarizeSpellSlots(spells = {}) {
   );
 }
 
+function conditionCatalog() {
+  return new Map((globalThis.CONFIG?.statusEffects ?? [])
+    .filter((status) => typeof status?.id === "string")
+    .map((status) => [status.id, { id: status.id, name: status.name ?? status.id }]));
+}
+
+function summarizeConditions(actor) {
+  const catalog = conditionCatalog();
+  return [...(actor?.statuses ?? [])].map((id) => ({ id, name: catalog.get(id)?.name ?? id }));
+}
+
 export function summarizePreparedActor(actor) {
   const system = actor?.system ?? {};
   const attributes = system.attributes ?? {};
@@ -56,6 +67,21 @@ export function summarizePreparedActor(actor) {
     },
     abilities: summarizeAbilities(system.abilities),
     spellSlots: summarizeSpellSlots(system.spells),
+    conditions: summarizeConditions(actor),
+  };
+}
+
+export function summarizePreparedParty(actors) {
+  return {
+    dataProvenance: {
+      source: "Foundry client Actor documents",
+      prepared: true,
+      interpretation: "Values were prepared by the active Foundry client, including system calculations and active effects.",
+    },
+    actors: [...actors]
+      .filter((actor) => actor?.type === "character")
+      .map(summarizePreparedActor)
+      .sort((left, right) => left.name.localeCompare(right.name)),
   };
 }
 
@@ -162,6 +188,41 @@ export async function setTemporaryHp(actor, request) {
   return { ...preview, after: summarizePreparedActor(actor).hp };
 }
 
+function validateConditionChange(request) {
+  const mode = request?.mode;
+  const statusId = request?.statusId;
+  if (mode !== "add" && mode !== "remove") throw new Error("Condition mode must be 'add' or 'remove'.");
+  if (typeof statusId !== "string" || !/^[a-z0-9-]{1,80}$/i.test(statusId)) throw new Error("statusId must be a valid condition identifier.");
+  if (statusId === "exhaustion") throw new Error("Exhaustion is level-based and is not supported by the generic condition tool.");
+  const status = conditionCatalog().get(statusId);
+  if (!status) throw new Error(`Condition '${statusId}' is not available in this Foundry world.`);
+  return { mode, statusId, status };
+}
+
+export function previewConditionChange(actor, request) {
+  const { mode, statusId, status } = validateConditionChange(request);
+  const before = summarizeConditions(actor);
+  const active = before.some((condition) => condition.id === statusId);
+  const after = mode === "add"
+    ? (active ? before : [...before, status])
+    : before.filter((condition) => condition.id !== statusId);
+  return {
+    actorId: actor.id ?? actor._id ?? null,
+    actorName: actor.name ?? "Unnamed actor",
+    operation: `${mode}-condition`,
+    condition: status,
+    before,
+    after,
+  };
+}
+
+export async function applyConditionChange(actor, request) {
+  const preview = previewConditionChange(actor, request);
+  if (typeof actor.toggleStatusEffect !== "function") throw new Error("The Foundry Actor.toggleStatusEffect method is unavailable.");
+  await actor.toggleStatusEffect(request.statusId, { active: request.mode === "add" });
+  return { ...preview, after: summarizeConditions(actor) };
+}
+
 function resourceSnapshot(actor, item, activity) {
   const serialize = (value) => JSON.parse(JSON.stringify(value ?? null));
   return {
@@ -260,6 +321,9 @@ export async function executeUtilityActivityUse(actor, request) {
 }
 
 async function handleBridgeRequest(request) {
+  if (request.type === "prepared-party-summary") {
+    return summarizePreparedParty(globalThis.game?.actors?.contents ?? globalThis.game?.actors ?? []);
+  }
   const actor = globalThis.game?.actors?.get(request.actorId);
   if (!actor) throw new Error(`Actor '${request.actorId}' was not found by the active GM client.`);
 
@@ -274,6 +338,10 @@ async function handleBridgeRequest(request) {
       return previewTemporaryHp(actor, request);
     case "set-temporary-hp":
       return setTemporaryHp(actor, request);
+    case "preview-condition-change":
+      return previewConditionChange(actor, request);
+    case "apply-condition-change":
+      return applyConditionChange(actor, request);
     case "preview-utility-activity-use":
       return previewUtilityActivityUse(actor, request);
     case "use-utility-activity":

@@ -22,6 +22,8 @@ for path in \
   "$root_dir/sidecar/bridge-auth.js" \
   "$root_dir/sidecar/confirmation.js" \
   "$root_dir/sidecar/Dockerfile" \
+  "$root_dir/sidecar/package.json" \
+  "$root_dir/sidecar/package-lock.json" \
   "$root_dir/module/module.json" \
   "$root_dir/module/scripts/prepared-actor-bridge.mjs"; do
   [[ -f "$path" ]] || { echo "Missing deployment source: $path" >&2; exit 66; }
@@ -38,6 +40,8 @@ cp -p '$sidecar_dir/actor-utils.js' '$sidecar_dir/actor-utils.js.backup-$stamp'
 cp -p '$sidecar_dir/bridge-auth.js' '$sidecar_dir/bridge-auth.js.backup-$stamp'
 cp -p '$sidecar_dir/confirmation.js' '$sidecar_dir/confirmation.js.backup-$stamp'
 cp -p '$sidecar_dir/Dockerfile' '$sidecar_dir/Dockerfile.backup-$stamp'
+if [[ -f '$sidecar_dir/package.json' ]]; then cp -p '$sidecar_dir/package.json' '$sidecar_dir/package.json.backup-$stamp'; fi
+if [[ -f '$sidecar_dir/package-lock.json' ]]; then cp -p '$sidecar_dir/package-lock.json' '$sidecar_dir/package-lock.json.backup-$stamp'; fi
 cp -p '$module_dir/module.json' '$module_dir/module.json.backup-$stamp'
 cp -p '$module_dir/scripts/prepared-actor-bridge.mjs' '$module_dir/scripts/prepared-actor-bridge.mjs.backup-$stamp'"
 
@@ -47,6 +51,8 @@ scp -o BatchMode=yes -o ConnectTimeout=8 \
   "$root_dir/sidecar/bridge-auth.js" \
   "$root_dir/sidecar/confirmation.js" \
   "$root_dir/sidecar/Dockerfile" \
+  "$root_dir/sidecar/package.json" \
+  "$root_dir/sidecar/package-lock.json" \
   "$target:$sidecar_dir/"
 scp -o BatchMode=yes -o ConnectTimeout=8 \
   "$root_dir/module/module.json" \

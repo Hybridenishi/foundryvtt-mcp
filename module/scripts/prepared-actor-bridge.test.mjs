@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { executeUtilityActivityUse, previewHpChange, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor } from "./prepared-actor-bridge.mjs";
+import { applyConditionChange, executeUtilityActivityUse, previewConditionChange, previewHpChange, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -65,6 +65,30 @@ test("temporary HP preview is explicit and setting it returns prepared readback"
   assert.deepEqual(result.before, { value: 7, max: 12, temp: 3, tempmax: 0 });
   assert.deepEqual(result.after, { value: 7, max: 12, temp: 9, tempmax: 0 });
   assert.throws(() => previewTemporaryHp(actor, { amount: -1 }), /between 0 and 100000/);
+});
+
+test("prepared party summary includes character conditions", () => {
+  globalThis.CONFIG = { statusEffects: [{ id: "blinded", name: "Blinded" }] };
+  const party = summarizePreparedParty([
+    { id: "npc-1", name: "Ignore", type: "npc", system: {} },
+    { id: "actor-1", name: "Zoe", type: "character", statuses: new Set(["blinded"]), system: { attributes: { hp: { value: 7, max: 12 } } } },
+  ]);
+  assert.equal(party.actors.length, 1);
+  assert.deepEqual(party.actors[0].conditions, [{ id: "blinded", name: "Blinded" }]);
+  delete globalThis.CONFIG;
+});
+
+test("condition changes use Foundry's status-effect API and exclude exhaustion", async () => {
+  globalThis.CONFIG = { statusEffects: [{ id: "blinded", name: "Blinded" }, { id: "exhaustion", name: "Exhaustion" }] };
+  const actor = {
+    id: "actor-1", name: "Test Actor", statuses: new Set(),
+    async toggleStatusEffect(statusId, options) { assert.equal(statusId, "blinded"); assert.deepEqual(options, { active: true }); this.statuses.add(statusId); },
+  };
+  assert.deepEqual(previewConditionChange(actor, { mode: "add", statusId: "blinded" }).after, [{ id: "blinded", name: "Blinded" }]);
+  const result = await applyConditionChange(actor, { mode: "add", statusId: "blinded" });
+  assert.deepEqual(result.after, [{ id: "blinded", name: "Blinded" }]);
+  assert.throws(() => previewConditionChange(actor, { mode: "add", statusId: "exhaustion" }), /level-based/);
+  delete globalThis.CONFIG;
 });
 
 function utilityFixture() {

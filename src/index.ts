@@ -15,7 +15,7 @@ function requiredEnvironment(name: string): string {
 async function main(): Promise<void> {
   const client = new FoundryClient({
     baseUrl: requiredEnvironment("FOUNDRY_URL"),
-    apiKey: process.env.FOUNDRY_API_KEY ?? "mcp-bridge-key-2026",
+    apiKey: requiredEnvironment("FOUNDRY_API_KEY"),
   });
   const writeEnabled = process.env.FOUNDRY_WRITE_ENABLED === "true";
   await client.connect();

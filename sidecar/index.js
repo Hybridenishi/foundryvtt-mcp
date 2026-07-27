@@ -27,7 +27,9 @@ const BRIDGE_SESSION_TIMEOUT = 8_000;
 const GM_ROLE = 4;
 const HP_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
 const TEMPORARY_HP_CONFIRMATION_TTL = 2 * 60_000;
+const CONDITION_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
 const ACTIVITY_USE_CONFIRMATION_TTL = 2 * 60_000;
+const WRITE_ENABLED = process.env.FOUNDRY_WRITE_ENABLED === "true";
 
 if (!API_KEY) throw new Error("API_KEY must be set for the sidecar API.");
 if (!PASSWORD) throw new Error("FOUNDRY_PASSWORD must be set for the sidecar account.");
@@ -41,6 +43,7 @@ const preparedActorClients = new Map();
 const queuedPreparedActorRequests = [];
 const hpChangeConfirmations = new Map();
 const temporaryHpConfirmations = new Map();
+const conditionChangeConfirmations = new Map();
 const activityUseConfirmations = new Map();
 
 function isConnected() {
@@ -149,6 +152,22 @@ function issueTemporaryHpConfirmation(actorId, change) {
 
 function consumeTemporaryHpConfirmation(token, actorId, change) {
   consumeConfirmation(temporaryHpConfirmations, token, { actorId, ...change }, "temporary-HP");
+}
+
+function parseConditionChange(body) {
+  const mode = body?.mode;
+  const statusId = body?.statusId;
+  if (mode !== "add" && mode !== "remove") throw new Error("mode must be 'add' or 'remove'");
+  if (typeof statusId !== "string" || !/^[a-z0-9-]{1,80}$/i.test(statusId)) throw new Error("statusId must be a valid condition identifier");
+  return { mode, statusId };
+}
+
+function issueConditionChangeConfirmation(actorId, change) {
+  return issueConfirmation(conditionChangeConfirmations, randomUUID(), { actorId, ...change }, CONDITION_CHANGE_CONFIRMATION_TTL);
+}
+
+function consumeConditionChangeConfirmation(token, actorId, change) {
+  consumeConfirmation(conditionChangeConfirmations, token, { actorId, ...change }, "condition-change");
 }
 
 function activityUseBinding(actorId, itemId, activityId) {
@@ -304,6 +323,11 @@ function bridgeTokenAuthorized(req, client) {
   return Boolean(client) && bridgeTokenMatches(req.headers["x-mcp-bridge-token"], client.bridgeToken);
 }
 
+function requireWriteEnabled(_req, res, next) {
+  if (!WRITE_ENABLED) return res.status(403).json({ error: "Write operations are disabled. Set FOUNDRY_WRITE_ENABLED=true to enable them." });
+  next();
+}
+
 // Same-origin HTTPS bridge for an active GM's Foundry browser client. The
 // regular sidecar API middleware below intentionally does not apply here.
 app.post("/mcp-bridge/ready", async (req, res) => {
@@ -445,6 +469,14 @@ app.get("/api/mcp/actors/:id/prepared", async (req, res) => {
   }
 });
 
+app.get("/api/mcp/party/prepared", async (_req, res) => {
+  try {
+    res.json(await requestBridgeOperation({ type: "prepared-party-summary" }));
+  } catch (e) {
+    res.status(e.message.includes("timed out") ? 504 : 500).json({ error: e.message });
+  }
+});
+
 // Guarded HP changes run inside the active GM client through dnd5e's
 // Actor.applyDamage. Preview is read-only; apply requires the one-time token
 // returned by the matching preview.
@@ -461,7 +493,7 @@ app.post("/api/mcp/actors/:id/hp-change/preview", async (req, res) => {
   }
 });
 
-app.post("/api/mcp/actors/:id/hp-change", async (req, res) => {
+app.post("/api/mcp/actors/:id/hp-change", requireWriteEnabled, async (req, res) => {
   try {
     const change = parseHpChange(req.body);
     consumeHpChangeConfirmation(req.body?.confirmationToken, req.params.id, change);
@@ -487,7 +519,7 @@ app.post("/api/mcp/actors/:id/temporary-hp/preview", async (req, res) => {
   }
 });
 
-app.post("/api/mcp/actors/:id/temporary-hp", async (req, res) => {
+app.post("/api/mcp/actors/:id/temporary-hp", requireWriteEnabled, async (req, res) => {
   try {
     const change = parseTemporaryHp(req.body);
     consumeTemporaryHpConfirmation(req.body?.confirmationToken, req.params.id, change);
@@ -496,6 +528,29 @@ app.post("/api/mcp/actors/:id/temporary-hp", async (req, res) => {
   } catch (e) {
     const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
       : e.message.includes("amount") ? 400 : 500;
+    res.status(status).json({ error: e.message });
+  }
+});
+
+app.post("/api/mcp/actors/:id/conditions/preview", async (req, res) => {
+  try {
+    const change = parseConditionChange(req.body);
+    const preview = await requestBridgeOperation({ type: "preview-condition-change", actorId: req.params.id, ...change });
+    res.json({ ...preview, confirmation: issueConditionChangeConfirmation(req.params.id, change) });
+  } catch (e) {
+    res.status(e.message.includes("mode") || e.message.includes("statusId") || e.message.includes("Exhaustion") ? 400 : 500).json({ error: e.message });
+  }
+});
+
+app.post("/api/mcp/actors/:id/conditions", requireWriteEnabled, async (req, res) => {
+  try {
+    const change = parseConditionChange(req.body);
+    consumeConditionChangeConfirmation(req.body?.confirmationToken, req.params.id, change);
+    const result = await requestBridgeOperation({ type: "apply-condition-change", actorId: req.params.id, ...change });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
+      : e.message.includes("mode") || e.message.includes("statusId") || e.message.includes("Exhaustion") ? 400 : 500;
     res.status(status).json({ error: e.message });
   }
 });
@@ -517,7 +572,7 @@ app.post("/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview",
   }
 });
 
-app.post("/api/mcp/actors/:id/items/:itemId/activities/:activityId/use", async (req, res) => {
+app.post("/api/mcp/actors/:id/items/:itemId/activities/:activityId/use", requireWriteEnabled, async (req, res) => {
   try {
     consumeActivityUseConfirmation(req.body?.confirmationToken, req.params.id, req.params.itemId, req.params.activityId);
     const result = await requestBridgeOperation({
@@ -621,7 +676,7 @@ app.get("/api/mcp/chat-log", async (req, res) => {
   try { const w = await getWorld(); let msgs = w.messages||[]; if(req.query.speaker){const s=req.query.speaker.toLowerCase();msgs=msgs.filter(m=>(m.speaker?.alias||m.user?.name||"").toLowerCase().includes(s));} res.json(msgs.slice(-Math.min(+req.query.limit||20,100)).reverse().map(m=>({_id:m._id,content:m.content,speaker:m.speaker?.alias||m.user?.name||"?",timestamp:m.timestamp}))); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
-app.post("/api/mcp/chat", async (req, res) => {
+app.post("/api/mcp/chat", requireWriteEnabled, async (req, res) => {
   if(!req.body?.content) return res.status(400).json({error:"Requires content"});
   try {
     const msgType = parseInt(req.body.type) || 1;
@@ -663,7 +718,7 @@ app.get("/api/mcp/users", async (_req, res) => {
 });
 
 // Write — actor update
-app.post("/api/mcp/actors/:id/update", async (req, res) => {
+app.post("/api/mcp/actors/:id/update", requireWriteEnabled, async (req, res) => {
   if(!req.body?.system) return res.status(400).json({error:"Requires {system:{...}}"});
   try {
     const updates = { _id: req.params.id };
@@ -673,7 +728,7 @@ app.post("/api/mcp/actors/:id/update", async (req, res) => {
 });
 
 // Write — actor create
-app.post("/api/mcp/actors/create", async (req, res) => {
+app.post("/api/mcp/actors/create", requireWriteEnabled, async (req, res) => {
   const { name, type, system } = req.body;
   if (!name) return res.status(400).json({ error: "Requires name" });
   try {
@@ -688,7 +743,7 @@ app.post("/api/mcp/actors/create", async (req, res) => {
 });
 
 // Write — actor delete
-app.post("/api/mcp/actors/:id/delete", async (req, res) => {
+app.post("/api/mcp/actors/:id/delete", requireWriteEnabled, async (req, res) => {
   try {
     socket.emit("modifyDocument", {
       type: "Actor",
@@ -699,7 +754,7 @@ app.post("/api/mcp/actors/:id/delete", async (req, res) => {
 });
 
 // Write — combat
-app.post("/api/mcp/combats/next-turn", async (req, res) => {
+app.post("/api/mcp/combats/next-turn", requireWriteEnabled, async (req, res) => {
   try {
     const w = await getWorld();
     const c = req.body?.combatId ? w.combats?.find(x=>x._id===req.body.combatId) : w.combats?.find(x=>x.active);
