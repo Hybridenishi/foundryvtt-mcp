@@ -51,9 +51,9 @@ Every later phase adds mutations, and each would inherit today's gaps. This phas
 - [ ] Converge the five legacy raw writes (`update_actor`, `create_actor`, `delete_actor`, `next_turn`, `create_chat_message`) onto the preview → confirmation → `dnd5e` pattern, or quarantine them behind an explicit debug flag.
 - [ ] Add a bounded Socket.IO reconnect loop. The disconnect handler currently gives up and the API returns 503 until the container restarts.
 - [ ] Allow concurrent bridge operations. Dispatch serves one parked poll per cycle today, which will not survive Phases 2 and 4.
-- [ ] Correct remaining stale metadata: reported server version, the activity-adapter wording, and the dead `test:auth` script.
+- [x] Correct remaining stale metadata: reported server version, the activity-adapter wording, and the dead `test:auth` script.
 - [x] Make the sidecar image buildable from the repository alone: track its lockfile and deploy both package manifests with the runtime source.
-- [ ] Add the first tests that exercise something other than pure helpers — tool registration, route mapping, authentication failure, write gating, and timeouts.
+- [x] Add the first tests that exercise something other than pure helpers — tool registration, route mapping, authentication failure, write gating, and timeouts.
 
 **Exit:** no advertised capability is ungated at the sidecar boundary, and the transport contract has tests.
 

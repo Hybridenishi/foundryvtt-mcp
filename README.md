@@ -14,6 +14,19 @@ The **sidecar** runs alongside Foundry and handles Socket.IO auth internally. Th
 
 **Auth method:** a private API key (`X-API-Key` header) between Hermes and the sidecar. The GM browser bridge does not use that key.
 
+## Documentation
+
+This file and [`AGENTS.md`](AGENTS.md) are the entry points; everything else lives in [`docs/`](docs/):
+
+| Doc | What it's for |
+|---|---|
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Planned work, by phase |
+| [`docs/FINDINGS.md`](docs/FINDINGS.md) | Live-deployment inspection data, architectural findings, and current known gaps |
+| [`docs/PRIMER.md`](docs/PRIMER.md) | Developer reference: repo layout, deploy/test workflow |
+| [`docs/SPEC.md`](docs/SPEC.md) | Original implementation plan — historical, not current |
+
+[`tests/`](tests/) holds both test suites: automated tests (`npm test`) and natural-language agent-behavior scenarios (`tests/scenarios/`), with `tests/README.md` explaining how to run each.
+
 ## Quick Start
 
 ```bash
@@ -216,7 +229,7 @@ Create its release asset after validating the build:
 ```bash
 npm run package:module
 gh release create v1.7.0 release/foundry-mcp-bridge.zip module/module.json \
-  --title "MCP Bridge v1.7.0" --notes "Prepared party overview, safe standard-condition changes, and server-side write gating."
+  --title "MCP Bridge v1.7.0" --notes "Prepared party overview, safe standard-condition changes, server-side write gating, typed damage, and spell-slot adjustment."
 ```
 
 The ZIP contains `module.json` and `scripts/` at its root, as required by Foundry's module installer.

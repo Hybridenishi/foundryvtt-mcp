@@ -2,7 +2,7 @@
 
 Personal MCP server connecting an MCP client to Foundry VTT v14 and D&D 5e over Socket.IO.
 
-Planned work: [`ROADMAP.md`](ROADMAP.md). Inspection data, architectural findings, and current-state gaps: [`FINDINGS.md`](FINDINGS.md). `SPEC.md` is the original implementation plan and is historical — do not treat it as current.
+Planned work: [`docs/ROADMAP.md`](docs/ROADMAP.md). Inspection data, architectural findings, and current-state gaps: [`docs/FINDINGS.md`](docs/FINDINGS.md). `docs/SPEC.md` is the original implementation plan and is historical — do not treat it as current.
 
 ## Critical Rules
 
@@ -30,7 +30,7 @@ Every mutation follows the pattern established by `apply_hp_change` and `execute
 3. Execution through the `dnd5e` API via the active GM bridge, never raw `modifyDocument`, so the system owns rules behavior.
 4. A **receipt** with before and after values, read back from the changed document before reporting success.
 
-`sidecar/confirmation.js` takes a caller-supplied binding object, so adding a gated operation means a new Map and a new binding shape — not a new mechanism. New bridge capabilities extend the `handleBridgeRequest` switch in `module/scripts/prepared-actor-bridge.mjs`.
+`sidecar/confirmation.js` separates a confirmation's identity (the binding — matched symmetrically, so an apply that omits *or* adds a bound field is rejected, not silently ignored) from an optional payload: data the apply step needs but that isn't part of the operation's identity, like spell slots' stale-state fingerprint. `sidecar/confirmations.js` holds the per-operation binding shapes, TTLs, and issue/consume wrappers; adding a gated operation means a new Map and binding shape there, plus a route in `sidecar/app.js` — not a new mechanism. New bridge capabilities extend the `handleBridgeRequest` switch in `module/scripts/prepared-actor-bridge.mjs`.
 
 The five legacy writes (`update_actor`, `create_actor`, `delete_actor`, `next_turn`, `create_chat_message`) predate this pattern and still use raw `modifyDocument`. Do not copy them; see Phase 1.
 
