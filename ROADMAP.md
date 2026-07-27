@@ -32,6 +32,7 @@ Shipped in v1.4.0 through v1.7.0:
 - **Prepared-data bridge** — a module running in an active GM browser, paired only after the sidecar validates that browser's authenticated Foundry GM session, then issued a short-lived in-memory token. Returns runtime-derived values the headless socket cannot supply.
 - **Confirmation-gated HP changes** — `preview_hp_change` / `apply_hp_change`, applied through `dnd5e`'s `Actor.applyDamage` so temporary HP is consumed correctly. Supports optional `damageType` for typed damage with resistance/vulnerability/immunity calculation.
 - **Temporary HP and standard conditions** — previewed, one-time-token changes through the GM bridge; temporary HP is explicit replacement and generic condition changes intentionally exclude level-based exhaustion.
+- **Spell-slot adjustment** — `preview_spell_slot_adjustment` / `apply_spell_slot_adjustment`, exact-value administrative counter adjustment through the GM bridge. Supports pact magic, canonical binding, stale-state protection. Character actors only.
 - **Prepared party overview** — one concise prepared read for all character actors, including HP, AC, conditions, and spell slots.
 - **Guarded utility-activity execution** — `preview_item_activity_use` / `execute_item_activity_use`, running `Activity#use()` for real behind a strict eligibility guard.
 - **Deploy and smoke scripts** — `scripts/deploy-foundry.sh` and `scripts/smoke-foundry.sh --require-bridge`.
@@ -67,7 +68,7 @@ All Tier A, all through the GM bridge, all following the established mutation pa
 - [ ] **Rests** — short and long rest through `dnd5e`, with `dialog: false` and hit-dice spending as an explicit input, since no GM is present to answer a prompt. Pin the API signature; it moved across 5.x.
 - [ ] **Combat control** — replace the sidecar-computed turn advance with `Combat#nextTurn()`, and add `Combat#setInitiative()`, initiative rolling, previous turn, and combat start/end.
 - [x] **Typed damage** — `Actor.applyDamage` accepts typed damage. Wired through with strict enum validation at all three layers; `damageType` on `preview_hp_change` / `apply_hp_change` triggers full resistance/vulnerability/immunity calculation.
-- [ ] **Spell slots and resources** — adjust slots (including pact magic, currently filtered out of prepared summaries) and limited-use resources.
+- [x] **Spell slots and resources** — adjust slots (including pact magic, now included in prepared summaries) and limited-use resources.
 - [x] **Party overview** — one prepared call returns HP, AC, conditions, and slots for all character actors.
 
 **Exit:** common combat and recovery operations run through `dnd5e` with verifiable receipts.
