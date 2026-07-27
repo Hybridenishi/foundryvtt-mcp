@@ -10,7 +10,7 @@ Hermes → MCP Server (stdio) → Sidecar (REST :30001) → Foundry (Socket.IO :
               Same-origin reverse proxy /mcp-bridge ↔ MCP Bridge module (active GM client)
 ```
 
-The **sidecar** runs alongside Foundry and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route. It also performs confirmation-guarded direct HP and temporary-HP changes through the dnd5e Actor API.
+The **sidecar** runs alongside Foundry and handles Socket.IO auth internally. The MCP server talks plain HTTP — no auth handshake, no session cookies, no internal protocol concerns. The optional MCP Bridge module supplies values prepared by Foundry's client runtime, such as derived AC, HP maximum, and spell-slot maxima; it requires an active GM browser session and communicates over a same-origin HTTPS `/mcp-bridge` long-poll route. It also performs confirmation-guarded direct HP, temporary-HP, condition, and spell-slot changes through the Foundry Actor API.
 
 **Auth method:** a private API key (`X-API-Key` header) between Hermes and the sidecar. The GM browser bridge does not use that key.
 
@@ -37,7 +37,7 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (36 total)
+## Tools (38 total)
 
 ### Read and service (22 tools)
 
@@ -72,28 +72,30 @@ mcp_servers:
 |---|---|
 | `roll_dice` | Any formula: `1d20+5`, `4d6kh3`, `d%`, `adv`, `dis` |
 
-### Previews (4 read-only tools)
+### Previews (5 read-only tools)
 
 | Tool | Description |
 |---|---|
 | `preview_hp_change` | Calculate direct damage/healing through the GM bridge and return a short-lived confirmation token; does not change Foundry |
 | `preview_temporary_hp` | Preview replacing temporary HP with an exact value through the GM bridge and return a short-lived confirmation token; does not change Foundry |
 | `preview_condition_change` | Preview adding or removing one standard condition through the GM bridge; exhaustion is intentionally excluded |
+| `preview_spell_slot_adjustment` | Preview exact spell-slot values through the GM bridge; returns a short-lived confirmation token. Administrative counter adjustment — does not cast spells. Supports pact magic, character actors only |
 | `preview_item_activity_use` | Read-only eligibility check for one exact, unambiguous embedded dnd5e utility activity with no external target; returns a short-lived confirmation token |
 
-### Write (9 tools, gated by `FOUNDRY_WRITE_ENABLED`)
+### Write (10 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
 | Tool | Description |
 |---|---|
 | `execute_item_activity_use` | Execute exactly one previewed dnd5e utility activity through the GM bridge; dnd5e controls consumption, effects, and chat output |
 | `set_temporary_hp` | Replace an actor's temporary HP with a previewed exact value through the GM bridge; use 0 to clear it |
+| `apply_hp_change` | Apply an exactly matching, previewed direct HP damage/healing change through dnd5e's `Actor.applyDamage` |
+| `apply_spell_slot_adjustment` | Apply an exactly matching, previewed spell-slot adjustment through the GM bridge. Stale-state protected — rejects if slots changed since preview |
 | `apply_condition_change` | Apply an exactly previewed standard-condition change through the GM bridge |
 | `update_actor` | Patch actor system attributes (`system.hp.value`, `system.currency.gp`, etc.) |
 | `create_actor` | Create a minimal actor; use Plutonium for complete 5e characters and creatures |
 | `delete_actor` | Delete an actor by ID |
 | `next_turn` | Advance combat through the sidecar's current internal combat operation |
 | `create_chat_message` | Post to Foundry chat |
-| `apply_hp_change` | Apply an exactly matching, previewed direct HP damage/healing change through dnd5e's `Actor.applyDamage` |
 
 ## Sidecar
 
@@ -139,6 +141,8 @@ FOUNDRY_WRITE_ENABLED=true             # Must be set here as well as in the MCP 
 | POST | `/api/mcp/actors/:id/temporary-hp` | Apply an exactly matching, previewed temporary-HP replacement through the active GM client |
 | POST | `/api/mcp/actors/:id/conditions/preview` | Read-only standard-condition change preview; returns one-time confirmation token |
 | POST | `/api/mcp/actors/:id/conditions` | Apply an exactly matching, previewed standard-condition change through the active GM client |
+| POST | `/api/mcp/actors/:id/spell-slots/preview` | Read-only exact spell-slot adjustment preview; returns one-time confirmation token; character actors only |
+| POST | `/api/mcp/actors/:id/spell-slots` | Apply an exactly matching, previewed spell-slot adjustment through the active GM client; stale-state protected |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview` | Validate one exact unambiguous dnd5e utility activity and issue a one-time confirmation token |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use` | Execute an exactly matching previewed dnd5e utility activity through the active GM client |
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |

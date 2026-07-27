@@ -165,6 +165,50 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   );
 
   server.registerTool(
+    "preview_spell_slot_adjustment",
+    {
+      description: "Preview an exact D&D 5e spell-slot adjustment through the active GM bridge. This does not modify Foundry and returns a short-lived confirmation token for apply_spell_slot_adjustment. This is an administrative counter adjustment — it does not cast spells, validate spellcasting requirements, or create chat output. Supports pact magic. Character actors only.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        adjustments: z.array(z.object({
+          slot: z.enum(["pact", "spell1", "spell2", "spell3", "spell4", "spell5", "spell6", "spell7", "spell8", "spell9"]),
+          value: z.number().int().min(0).max(100_000),
+        })).min(1).max(10),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, adjustments }) => {
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/spell-slots/preview`, { adjustments });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "apply_spell_slot_adjustment",
+    {
+      description: "Apply an exact, previewed D&D 5e spell-slot adjustment through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact short-lived confirmation token from preview_spell_slot_adjustment. This is an administrative counter adjustment — it does not cast spells. Stale-state protected: rejects if slots changed since preview. Character actors only.",
+      inputSchema: {
+        actorId: z.string().min(1),
+        adjustments: z.array(z.object({
+          slot: z.enum(["pact", "spell1", "spell2", "spell3", "spell4", "spell5", "spell6", "spell7", "spell8", "spell9"]),
+          value: z.number().int().min(0).max(100_000),
+        })).min(1).max(10),
+        confirmationToken: z.string().uuid(),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ actorId, adjustments, confirmationToken }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/spell-slots`, { adjustments, confirmationToken });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "execute_item_activity_use",
     {
       description: "Execute exactly one previewed dnd5e utility activity through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact, short-lived, one-time confirmation token. dnd5e performs the activity; this tool reports the resulting chat message, system-reported updates, and observed resource changes.",

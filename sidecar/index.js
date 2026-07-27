@@ -29,6 +29,7 @@ const HP_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
 const TEMPORARY_HP_CONFIRMATION_TTL = 2 * 60_000;
 const CONDITION_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
 const ACTIVITY_USE_CONFIRMATION_TTL = 2 * 60_000;
+const SPELL_SLOT_ADJUSTMENT_CONFIRMATION_TTL = 2 * 60_000;
 const WRITE_ENABLED = process.env.FOUNDRY_WRITE_ENABLED === "true";
 
 if (!API_KEY) throw new Error("API_KEY must be set for the sidecar API.");
@@ -45,6 +46,7 @@ const hpChangeConfirmations = new Map();
 const temporaryHpConfirmations = new Map();
 const conditionChangeConfirmations = new Map();
 const activityUseConfirmations = new Map();
+const spellSlotAdjustmentConfirmations = new Map();
 
 function isConnected() {
   return connected && Boolean(socket?.connected);
@@ -213,6 +215,73 @@ function issueActivityUseConfirmation(actorId, itemId, activityId) {
 
 function consumeActivityUseConfirmation(token, actorId, itemId, activityId) {
   consumeConfirmation(activityUseConfirmations, token, activityUseBinding(actorId, itemId, activityId), "activity-use");
+}
+
+// Spell slot adjustment — canonical binding + stale-state protection
+const SLOT_IDS = new Set(["pact", ...Array.from({ length: 9 }, (_, i) => `spell${i + 1}`)]);
+
+function canonicalAdjustments(adjustments) {
+  return [...adjustments]
+    .map(({ slot, value }) => ({ slot, value }))
+    .sort((a, b) => a.slot.localeCompare(b.slot));
+}
+
+function adjustmentsKey(adjustments) {
+  return JSON.stringify(canonicalAdjustments(adjustments));
+}
+
+function selectedStateKey(selectedSlots) {
+  return JSON.stringify(selectedSlots.map(({ slot, value, max, override }) => ({
+    slot, value, max, override,
+  })));
+}
+
+function parseSpellSlotAdjustment(body) {
+  const adjustments = body?.adjustments;
+  if (!Array.isArray(adjustments) || adjustments.length === 0) {
+    throw new Error("adjustments must be a non-empty array");
+  }
+  const seen = new Set();
+  for (const adj of adjustments) {
+    if (!adj || Object.keys(adj).some((k) => k !== "slot" && k !== "value")) {
+      throw new Error("Each adjustment must contain only slot and value");
+    }
+    if (!SLOT_IDS.has(adj.slot)) throw new Error(`slot must be pact or spell1 through spell9, got '${adj.slot}'`);
+    if (!Number.isInteger(adj.value) || adj.value < 0 || adj.value > 100_000) throw new Error("value must be an integer between 0 and 100000");
+    if (seen.has(adj.slot)) throw new Error(`Duplicate slot '${adj.slot}'`);
+    seen.add(adj.slot);
+  }
+  return { adjustments, adjustmentsKey: adjustmentsKey(adjustments) };
+}
+
+function spellSlotAdjustmentBinding(actorId, adjustments, selectedSlots) {
+  return {
+    actorId,
+    operation: "adjust-spell-slots",
+    adjustmentsKey: adjustmentsKey(adjustments),
+    selectedStateKey: selectedStateKey(selectedSlots),
+  };
+}
+
+function issueSpellSlotAdjustmentConfirmation(actorId, adjustments, selectedSlots) {
+  return issueConfirmation(
+    spellSlotAdjustmentConfirmations,
+    randomUUID(),
+    spellSlotAdjustmentBinding(actorId, adjustments, selectedSlots),
+    SPELL_SLOT_ADJUSTMENT_CONFIRMATION_TTL,
+  );
+}
+
+function consumeSpellSlotAdjustmentConfirmation(token, actorId, adjustments) {
+  // Consume with only identifying fields (actorId, operation, adjustmentsKey).
+  // The stored binding also contains selectedStateKey, which we return to pass
+  // as a trusted fingerprint to the bridge.
+  return consumeConfirmation(
+    spellSlotAdjustmentConfirmations,
+    token,
+    { actorId, operation: "adjust-spell-slots", adjustmentsKey: adjustmentsKey(adjustments) },
+    "spell-slot-adjustment",
+  );
 }
 
 // ── 4-Step Auth (proven against Foundry v14) ──────────────────────
@@ -613,6 +682,45 @@ app.post("/api/mcp/actors/:id/items/:itemId/activities/:activityId/use", require
   } catch (e) {
     const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
       : e.message.includes("only supports") || e.message.includes("cannot") || e.message.includes("does not") ? 400 : 500;
+    res.status(status).json({ error: e.message });
+  }
+});
+
+// Guarded spell-slot adjustment: exact values only, canonical binding,
+// stale-state check at apply time through the GM bridge.
+app.post("/api/mcp/actors/:id/spell-slots/preview", async (req, res) => {
+  try {
+    const parsed = parseSpellSlotAdjustment(req.body);
+    const preview = await requestBridgeOperation({
+      type: "preview-spell-slot-adjustment",
+      actorId: req.params.id,
+      adjustments: parsed.adjustments,
+    });
+    const selectedSlots = preview.selectedSlots;
+    delete preview.selectedSlots; // internal bridge field — not public
+    res.json({
+      ...preview,
+      confirmation: issueSpellSlotAdjustmentConfirmation(req.params.id, parsed.adjustments, selectedSlots),
+    });
+  } catch (e) {
+    res.status(e.message.includes("adjustments") || e.message.includes("slot") || e.message.includes("value") ? 400 : 500).json({ error: e.message });
+  }
+});
+
+app.post("/api/mcp/actors/:id/spell-slots", requireWriteEnabled, async (req, res) => {
+  try {
+    const parsed = parseSpellSlotAdjustment(req.body);
+    const storedBinding = consumeSpellSlotAdjustmentConfirmation(req.body?.confirmationToken, req.params.id, parsed.adjustments);
+    const result = await requestBridgeOperation({
+      type: "apply-spell-slot-adjustment",
+      actorId: req.params.id,
+      adjustments: parsed.adjustments,
+      expectedSelectedStateKey: storedBinding.selectedStateKey,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    const status = e.message.includes("confirmation") || e.message.includes("token") || e.message.includes("state changed") ? 409
+      : e.message.includes("adjustments") || e.message.includes("slot") || e.message.includes("value") ? 400 : 500;
     res.status(status).json({ error: e.message });
   }
 });
