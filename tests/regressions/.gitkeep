@@ -1,0 +1,3 @@
+This directory holds a transcript only when a scenario run in ../scenarios
+actually finds a defect. See ../README.md for the convention. Empty is the
+expected steady state — it means nothing has failed lately.
