@@ -126,7 +126,7 @@ test("applyHpChange with typed damage derives breakdown from actual state change
   assert.equal(result.before.value, 20, "before should be actual pre-damage state");
   assert.equal(result.after.value, 15, "after should be actual post-damage state (resistance halved)");
   assert.equal(result.appliedToHp, 5, "appliedToHp should be actual HP lost (5, not 10)");
-  assert.equal(result.unspentAmount, 0, "all damage was absorbed");
+  assert.equal(result.unspentAmount, 5, "unspentAmount should be the 5 resisted damage");
   assert.match(result.rulesNote, /Typed fire damage applied/);
 
   // No afterIsTentative on apply — this is the actual result
@@ -172,12 +172,39 @@ test("applyHpChange untyped backward compatibility still works", async () => {
   assert.equal(appliedDamage, 10);
   assert.equal(damageResult.appliedToHp, 10);
   assert.equal(damageResult.damageType, undefined);
+  assert.equal(damageResult.unspentAmount, 0);
 
   // Untyped healing
   appliedDamage = null;
   actor.system.attributes.hp.value = 30;
   await applyHpChange(actor, { mode: "healing", amount: 5 });
   assert.equal(appliedDamage, -5);
+});
+
+test("applyHpChange healing receipt shows directional hpDelta", async () => {
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 10, max: 30, temp: 0, tempmax: 0 } } },
+    async applyDamage(damages) {
+      // Heal 15 HP
+      this.system.attributes.hp.value = 25;
+    },
+  };
+
+  const result = await applyHpChange(actor, { mode: "healing", amount: 20 });
+  assert.equal(result.before.value, 10);
+  assert.equal(result.after.value, 25);
+  assert.equal(result.appliedToHp, 15, "healing receipt must show hpDelta as after-before");
+  assert.equal(result.unspentAmount, 5, "5 HP of healing exceeded max (10+20=30, capped at 25, 5 unspent)");
+});
+
+test("applyHpChange rejects actors without prepared HP", async () => {
+  const noHp = { id: "no-hp", name: "Ghost", system: { attributes: {} } };
+  await assert.rejects(
+    () => applyHpChange(noHp, { mode: "damage", amount: 5 }),
+    /does not have prepared current and maximum HP/,
+  );
 });
 
 test("temporary HP preview is explicit and setting it returns prepared readback", async () => {

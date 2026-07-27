@@ -517,7 +517,7 @@ app.post("/api/mcp/actors/:id/hp-change/preview", async (req, res) => {
       confirmation: issueHpChangeConfirmation(req.params.id, change),
     });
   } catch (e) {
-    res.status(e.message.includes("mode") || e.message.includes("amount") ? 400 : 500).json({ error: e.message });
+    res.status(e.message.includes("mode") || e.message.includes("amount") || e.message.includes("damageType") ? 400 : 500).json({ error: e.message });
   }
 });
 
@@ -529,7 +529,7 @@ app.post("/api/mcp/actors/:id/hp-change", requireWriteEnabled, async (req, res) 
     res.json({ ok: true, ...result });
   } catch (e) {
     const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
-      : e.message.includes("mode") || e.message.includes("amount") ? 400 : 500;
+      : e.message.includes("mode") || e.message.includes("amount") || e.message.includes("damageType") ? 400 : 500;
     res.status(status).json({ error: e.message });
   }
 });

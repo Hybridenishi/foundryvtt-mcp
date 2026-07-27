@@ -178,6 +178,12 @@ export function previewHpChange(actor, request) {
 
 export async function applyHpChange(actor, request) {
   const { mode, amount, damageType } = validateHpChange(request);
+
+  const hp = actor?.system?.attributes?.hp;
+  if (!hp || !Number.isFinite(hp.value) || !Number.isFinite(hp.max)) {
+    throw new Error("This actor does not have prepared current and maximum HP.");
+  }
+
   if (typeof actor.applyDamage !== "function") {
     throw new Error("The installed dnd5e Actor.applyDamage method is unavailable.");
   }
@@ -198,12 +204,12 @@ export async function applyHpChange(actor, request) {
   const hpBefore = beforeState.value ?? 0;
   const hpAfter = afterState.value ?? 0;
   const tempAbsorbed = Math.max(0, tempBefore - tempAfter);
-  const hpLost = Math.max(0, hpBefore - hpAfter);
-  // unspentAmount: for damage, HP overflow past 0. For healing, HP overflow past max.
-  // Resistance/immunity reduction shows as the gap between requestedAmount and appliedToTemp + appliedToHp.
-  const unspentAmount = mode === "damage"
-    ? (hpAfter <= 0 ? Math.abs(hpAfter) : 0)
-    : Math.max(0, hpBefore + amount - (beforeState.max ?? hpBefore));
+  const hpDelta = mode === "damage"
+    ? Math.max(0, hpBefore - hpAfter)
+    : Math.max(0, hpAfter - hpBefore);
+  // unspentAmount: total requested damage/healing that was not applied.
+  // Resistance, immunity, damage thresholds, and HP/healing overflow all contribute.
+  const unspentAmount = Math.max(0, amount - tempAbsorbed - hpDelta);
 
   return {
     actorId: actor.id ?? actor._id ?? null,
@@ -218,7 +224,7 @@ export async function applyHpChange(actor, request) {
     before: beforeState,
     after: afterState,
     appliedToTemp: tempAbsorbed,
-    appliedToHp: hpLost,
+    appliedToHp: hpDelta,
     unspentAmount,
   };
 }
