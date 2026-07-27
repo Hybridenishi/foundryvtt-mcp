@@ -20,17 +20,22 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   server.registerTool(
     "preview_hp_change",
     {
-      description: "Preview a direct D&D 5e HP damage or healing change through the active GM bridge. This does not modify Foundry and returns a short-lived confirmation token for apply_hp_change. Direct damage respects temporary HP but does not calculate damage types, resistance, vulnerability, or immunity.",
+      description: "Preview a direct D&D 5e HP damage or healing change through the active GM bridge. This does not modify Foundry and returns a short-lived confirmation token for apply_hp_change. When damageType is provided (damage mode only), dnd5e calculates resistance, vulnerability, and immunity — previewed after values are raw BEFORE those calculations and may differ from the actual result.",
       inputSchema: {
         actorId: z.string().min(1),
         mode: z.enum(["damage", "healing"]),
         amount: z.number().int().min(1).max(100_000),
+        damageType: z.enum([
+          "acid", "bludgeoning", "cold", "fire", "force",
+          "lightning", "necrotic", "piercing", "poison", "psychic",
+          "radiant", "slashing", "thunder",
+        ]).optional().describe("dnd5e damage type (damage mode only; e.g., 'fire', 'piercing')"),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ actorId, mode, amount }) => {
+    async ({ actorId, mode, amount, damageType }) => {
       try {
-        const res = await http.post(`/api/mcp/actors/${actorId}/hp-change/preview`, { mode, amount });
+        const res = await http.post(`/api/mcp/actors/${actorId}/hp-change/preview`, { mode, amount, ...(damageType ? { damageType } : {}) });
         return textResult(res.data);
       } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
     },
@@ -39,19 +44,24 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   server.registerTool(
     "apply_hp_change",
     {
-      description: "Apply a previously previewed direct D&D 5e HP damage or healing change through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact short-lived confirmation token from preview_hp_change. Damage respects temporary HP but does not calculate damage types, resistance, vulnerability, or immunity.",
+      description: "Apply a previously previewed direct D&D 5e HP damage or healing change through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact short-lived confirmation token from preview_hp_change. When damageType is provided (damage mode only), dnd5e calculates resistance, vulnerability, and immunity — the apply response derives its breakdown from the actual state change, not the preview's raw math.",
       inputSchema: {
         actorId: z.string().min(1),
         mode: z.enum(["damage", "healing"]),
         amount: z.number().int().min(1).max(100_000),
+        damageType: z.enum([
+          "acid", "bludgeoning", "cold", "fire", "force",
+          "lightning", "necrotic", "piercing", "poison", "psychic",
+          "radiant", "slashing", "thunder",
+        ]).optional().describe("dnd5e damage type (damage mode only; must match preview)"),
         confirmationToken: z.string().uuid(),
       },
       annotations: { destructiveHint: false },
     },
-    async ({ actorId, mode, amount, confirmationToken }) => {
+    async ({ actorId, mode, amount, damageType, confirmationToken }) => {
       if (!writeEnabled) return disabledResult();
       try {
-        const res = await http.post(`/api/mcp/actors/${actorId}/hp-change`, { mode, amount, confirmationToken });
+        const res = await http.post(`/api/mcp/actors/${actorId}/hp-change`, { mode, amount, ...(damageType ? { damageType } : {}), confirmationToken });
         return textResult(res.data);
       } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
     },

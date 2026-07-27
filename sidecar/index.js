@@ -118,6 +118,19 @@ function requestPreparedActor(actorId) {
   return requestBridgeOperation({ type: "prepared-actor-summary", actorId });
 }
 
+const VALID_DAMAGE_TYPES = new Set([
+  "acid", "bludgeoning", "cold", "fire", "force",
+  "lightning", "necrotic", "piercing", "poison", "psychic",
+  "radiant", "slashing", "thunder",
+]);
+
+function normalizeDamageType(raw) {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.toLowerCase();
+}
+
 function parseHpChange(body) {
   const mode = body?.mode;
   const amount = body?.amount;
@@ -127,7 +140,22 @@ function parseHpChange(body) {
   if (!Number.isInteger(amount) || amount < 1 || amount > 100_000) {
     throw new Error("amount must be an integer between 1 and 100000");
   }
-  return { mode, amount };
+
+  const damageType = normalizeDamageType(body?.damageType);
+
+  if (damageType !== null && mode !== "damage") {
+    throw new Error("damageType is only valid for damage mode, not healing");
+  }
+  if (body?.damageType !== null && body?.damageType !== undefined) {
+    const raw = String(body.damageType);
+    if (raw.trim().length === 0) {
+      throw new Error("damageType must not be empty or whitespace-only");
+    }
+    if (!VALID_DAMAGE_TYPES.has(damageType)) {
+      throw new Error(`damageType '${raw.trim()}' is not a recognized dnd5e damage type`);
+    }
+  }
+  return { mode, amount, ...(damageType ? { damageType } : {}) };
 }
 
 function issueHpChangeConfirmation(actorId, change) {
@@ -489,7 +517,7 @@ app.post("/api/mcp/actors/:id/hp-change/preview", async (req, res) => {
       confirmation: issueHpChangeConfirmation(req.params.id, change),
     });
   } catch (e) {
-    res.status(e.message.includes("mode") || e.message.includes("amount") ? 400 : 500).json({ error: e.message });
+    res.status(e.message.includes("mode") || e.message.includes("amount") || e.message.includes("damageType") ? 400 : 500).json({ error: e.message });
   }
 });
 
@@ -501,7 +529,7 @@ app.post("/api/mcp/actors/:id/hp-change", requireWriteEnabled, async (req, res) 
     res.json({ ok: true, ...result });
   } catch (e) {
     const status = e.message.includes("confirmation") || e.message.includes("token") ? 409
-      : e.message.includes("mode") || e.message.includes("amount") ? 400 : 500;
+      : e.message.includes("mode") || e.message.includes("amount") || e.message.includes("damageType") ? 400 : 500;
     res.status(status).json({ error: e.message });
   }
 });
