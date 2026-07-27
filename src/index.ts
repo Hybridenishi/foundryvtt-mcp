@@ -22,7 +22,7 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "foundryvtt-mcp",
-    version: "1.0.0",
+    version: "1.7.0", // keep in step with package.json's "version"
   });
   server.registerTool(
     "ping",
