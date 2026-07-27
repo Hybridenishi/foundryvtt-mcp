@@ -49,7 +49,7 @@ test("previewHpChange accounts for temporary HP and caps healing", () => {
   assert.equal(healing.unspentAmount, 5);
 });
 
-test("previewHpChange with damageType includes type in output and rulesNote", () => {
+test("typed damage preview includes type, tentative flag, and rulesNote", () => {
   const actor = {
     id: "actor-1",
     name: "Test Actor",
@@ -60,21 +60,52 @@ test("previewHpChange with damageType includes type in output and rulesNote", ()
   assert.equal(fire.damageType, "fire");
   assert.match(fire.rulesNote, /Typed fire damage/);
   assert.match(fire.rulesNote, /resistance, vulnerability, and immunity are calculated/);
+  assert.equal(typeof fire.afterIsTentative, "string", "typed preview must include afterIsTentative warning");
+  assert.match(fire.afterIsTentative, /raw calculations BEFORE/);
 
-  // Untyped: no damageType field, old rulesNote
+  // Untyped: no damageType field, old rulesNote, no tentative flag
   const untyped = previewHpChange(actor, { mode: "damage", amount: 10 });
   assert.equal(untyped.damageType, undefined);
   assert.match(untyped.rulesNote, /not calculated/);
+  assert.equal(untyped.afterIsTentative, null);
 });
 
-test("validateHpChange rejects damageType on healing mode", () => {
+test("validateHpChange rejects invalid damageType values", () => {
+  const actor = { system: { attributes: { hp: { value: 10, max: 10 } } } };
+
+  // Whitespace-only
   assert.throws(
-    () => previewHpChange({ system: { attributes: { hp: { value: 10, max: 10 } } } }, { mode: "healing", amount: 5, damageType: "fire" }),
+    () => previewHpChange(actor, { mode: "damage", amount: 5, damageType: "  " }),
+    /whitespace/,
+  );
+
+  // Unknown type
+  assert.throws(
+    () => previewHpChange(actor, { mode: "damage", amount: 5, damageType: "banana" }),
+    /not a recognized dnd5e damage type/,
+  );
+
+  // Healing mode with damageType
+  assert.throws(
+    () => previewHpChange(actor, { mode: "healing", amount: 5, damageType: "fire" }),
     /only valid for damage mode/,
   );
 });
 
-test("applyHpChange with damageType calls applyDamage with typed array", async () => {
+test("validateHpChange normalizes trimmed damageType", () => {
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 20, max: 20, temp: 0, tempmax: 0 } } },
+  };
+
+  // Leading/trailing whitespace → trimmed
+  const result = previewHpChange(actor, { mode: "damage", amount: 10, damageType: " Fire " });
+  assert.equal(result.damageType, "fire", "damageType should be trimmed and lowercased");
+});
+
+test("applyHpChange with typed damage derives breakdown from actual state change", async () => {
+  // Simulate a fire-resistant actor: applyDamage halves fire damage
   let appliedDamage = null;
   const actor = {
     id: "actor-1",
@@ -82,7 +113,8 @@ test("applyHpChange with damageType calls applyDamage with typed array", async (
     system: { attributes: { hp: { value: 20, max: 20, temp: 0, tempmax: 0 } } },
     async applyDamage(damages) {
       appliedDamage = damages;
-      this.system.attributes.hp.value = 10; // simulate resistance halving
+      // Simulate fire resistance: only take half
+      this.system.attributes.hp.value = 15;
     },
   };
 
@@ -90,8 +122,60 @@ test("applyHpChange with damageType calls applyDamage with typed array", async (
   assert.deepEqual(appliedDamage, [{ value: 10, type: "fire" }]);
   assert.equal(result.damageType, "fire");
 
-  // Untyped: still passes a number (backward compatible)
+  // Breakdown must be derived from actual state, not raw math
+  assert.equal(result.before.value, 20, "before should be actual pre-damage state");
+  assert.equal(result.after.value, 15, "after should be actual post-damage state (resistance halved)");
+  assert.equal(result.appliedToHp, 5, "appliedToHp should be actual HP lost (5, not 10)");
+  assert.equal(result.unspentAmount, 0, "all damage was absorbed");
+  assert.match(result.rulesNote, /Typed fire damage applied/);
+
+  // No afterIsTentative on apply — this is the actual result
+  assert.ok(!("afterIsTentative" in result), "apply response should not have afterIsTentative");
+});
+
+test("applyHpChange with typed damage and temp HP derives correct breakdown", async () => {
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 20, max: 20, temp: 5, tempmax: 0 } } },
+    async applyDamage(damages) {
+      // No resistance — full damage. Temp absorbs 5, remaining 5 goes to HP.
+      this.system.attributes.hp.temp = 0;
+      this.system.attributes.hp.value = 15;
+    },
+  };
+
+  const result = await applyHpChange(actor, { mode: "damage", amount: 10, damageType: "piercing" });
+  assert.equal(result.before.temp, 5);
+  assert.equal(result.after.temp, 0);
+  assert.equal(result.appliedToTemp, 5, "temp HP should have absorbed 5");
+  assert.equal(result.before.value, 20);
+  assert.equal(result.after.value, 15);
+  assert.equal(result.appliedToHp, 5, "HP lost should be 5 (10 total - 5 temp)");
+  assert.equal(result.unspentAmount, 0);
+});
+
+test("applyHpChange untyped backward compatibility still works", async () => {
+  let appliedDamage = null;
+  const actor = {
+    id: "actor-1",
+    name: "Test Actor",
+    system: { attributes: { hp: { value: 20, max: 20, temp: 0, tempmax: 0 } } },
+    async applyDamage(damages) {
+      appliedDamage = damages;
+      this.system.attributes.hp.value = 10;
+    },
+  };
+
+  // Untyped damage
+  const damageResult = await applyHpChange(actor, { mode: "damage", amount: 10 });
+  assert.equal(appliedDamage, 10);
+  assert.equal(damageResult.appliedToHp, 10);
+  assert.equal(damageResult.damageType, undefined);
+
+  // Untyped healing
   appliedDamage = null;
+  actor.system.attributes.hp.value = 30;
   await applyHpChange(actor, { mode: "healing", amount: 5 });
   assert.equal(appliedDamage, -5);
 });

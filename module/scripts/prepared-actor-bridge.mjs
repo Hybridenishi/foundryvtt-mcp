@@ -89,24 +89,42 @@ function hpValue(value) {
   return Number.isFinite(value) ? value : 0;
 }
 
+const VALID_DAMAGE_TYPES = new Set([
+  "acid", "bludgeoning", "cold", "fire", "force",
+  "lightning", "necrotic", "piercing", "poison", "psychic",
+  "radiant", "slashing", "thunder",
+]);
+
+function normalizeDamageType(raw) {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.toLowerCase();
+}
+
 function validateHpChange(request) {
   const mode = request?.mode;
   const amount = request?.amount;
-  const damageType = request?.damageType ?? null;
   if (mode !== "damage" && mode !== "healing") {
     throw new Error("HP change mode must be 'damage' or 'healing'.");
   }
   if (!Number.isInteger(amount) || amount < 1 || amount > 100_000) {
     throw new Error("HP change amount must be an integer between 1 and 100000.");
   }
-  if (damageType !== null && typeof damageType !== "string") {
-    throw new Error("damageType must be a string when provided.");
-  }
-  if (damageType !== null && damageType.length === 0) {
-    throw new Error("damageType must not be empty when provided.");
-  }
+
+  const damageType = normalizeDamageType(request?.damageType);
+
   if (damageType !== null && mode !== "damage") {
     throw new Error("damageType is only valid for damage mode, not healing.");
+  }
+  if (request?.damageType !== null && request?.damageType !== undefined) {
+    const raw = String(request.damageType);
+    if (raw.trim().length === 0) {
+      throw new Error("damageType must not be empty or whitespace-only.");
+    }
+    if (!VALID_DAMAGE_TYPES.has(damageType)) {
+      throw new Error(`damageType '${raw.trim()}' is not a recognized dnd5e damage type. Valid types: ${[...VALID_DAMAGE_TYPES].sort().join(", ")}.`);
+    }
   }
   return { mode, amount, damageType };
 }
@@ -134,7 +152,8 @@ export function previewHpChange(actor, request) {
     tempmax: before.tempmax,
   };
 
-  const rulesNote = damageType
+  const typed = Boolean(damageType);
+  const rulesNote = typed
     ? `Typed ${damageType} damage uses dnd5e Actor.applyDamage with damage type; resistance, vulnerability, and immunity are calculated by the dnd5e system.`
     : "Direct HP damage/healing uses dnd5e Actor.applyDamage with no damage type; resistance, vulnerability, and immunity are not calculated.";
 
@@ -148,6 +167,7 @@ export function previewHpChange(actor, request) {
     rulesNote,
     before,
     after,
+    afterIsTentative: typed ? "Preview after values are raw calculations BEFORE dnd5e resistance, vulnerability, and immunity are applied. Actual HP change may differ." : null,
     appliedToTemp: tempAbsorbed,
     appliedToHp: Math.abs(after.value - before.value),
     unspentAmount: mode === "damage"
@@ -157,18 +177,49 @@ export function previewHpChange(actor, request) {
 }
 
 export async function applyHpChange(actor, request) {
-  const preview = previewHpChange(actor, request);
+  const { mode, amount, damageType } = validateHpChange(request);
   if (typeof actor.applyDamage !== "function") {
     throw new Error("The installed dnd5e Actor.applyDamage method is unavailable.");
   }
-  if (request.mode === "damage" && request.damageType) {
-    await actor.applyDamage([{ value: request.amount, type: request.damageType }]);
+
+  const beforeState = summarizePreparedActor(actor).hp;
+
+  if (mode === "damage" && damageType) {
+    await actor.applyDamage([{ value: amount, type: damageType }]);
   } else {
-    await actor.applyDamage(request.mode === "damage" ? request.amount : -request.amount);
+    await actor.applyDamage(mode === "damage" ? amount : -amount);
   }
+
+  const afterState = summarizePreparedActor(actor).hp;
+
+  // Derive breakdown from the actual state change, not raw math.
+  const tempBefore = beforeState.temp ?? 0;
+  const tempAfter = afterState.temp ?? 0;
+  const hpBefore = beforeState.value ?? 0;
+  const hpAfter = afterState.value ?? 0;
+  const tempAbsorbed = Math.max(0, tempBefore - tempAfter);
+  const hpLost = Math.max(0, hpBefore - hpAfter);
+  // unspentAmount: for damage, HP overflow past 0. For healing, HP overflow past max.
+  // Resistance/immunity reduction shows as the gap between requestedAmount and appliedToTemp + appliedToHp.
+  const unspentAmount = mode === "damage"
+    ? (hpAfter <= 0 ? Math.abs(hpAfter) : 0)
+    : Math.max(0, hpBefore + amount - (beforeState.max ?? hpBefore));
+
   return {
-    ...preview,
-    after: summarizePreparedActor(actor).hp,
+    actorId: actor.id ?? actor._id ?? null,
+    actorName: actor.name ?? "Unnamed actor",
+    mode,
+    requestedAmount: amount,
+    ...(damageType ? { damageType } : {}),
+    directHpChange: true,
+    rulesNote: damageType
+      ? `Typed ${damageType} damage applied through dnd5e Actor.applyDamage with resistance, vulnerability, and immunity calculated by the dnd5e system.`
+      : "Direct HP damage/healing applied through dnd5e Actor.applyDamage with no damage type; resistance, vulnerability, and immunity were not calculated.",
+    before: beforeState,
+    after: afterState,
+    appliedToTemp: tempAbsorbed,
+    appliedToHp: hpLost,
+    unspentAmount,
   };
 }
 
