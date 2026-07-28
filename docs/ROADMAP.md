@@ -110,13 +110,13 @@ The first consumer is a Discord bot with vector memory, answering questions like
 
 This is the highest-consequence write on the roadmap, and not for rules reasons. A wrong hit point value is corrected in seconds; DM notes rendered visible to a player cannot be un-seen.
 
-- [ ] **Named visibility profiles** — `gm`, `party`, and `players: [...]`, expanding to Foundry ownership maps. Foundry supports per-user ownership natively, so per-player secrets and blanket visibility are the same mechanism at different settings.
-- [ ] **Visibility is required, and defaults to GM-only.** A single call may not produce mixed-visibility content; the caller declares which bucket each piece belongs to.
-- [ ] **Explicit page ownership** — pages inherit from the parent entry unless overridden, which is the likeliest way notes leak. GM pages set ownership explicitly rather than relying on a default.
-- [ ] **Receipts report resolved names, not IDs.** "Visible to Alice and Bob" can be checked at a glance; an ownership map keyed by user ID cannot, and an unverifiable receipt on a spoiler-sensitive write is worth nothing.
-- [ ] **Fail loud on name resolution.** Players are named by player or character name. An ambiguous or unmatched name refuses the write rather than guessing.
-- [ ] **NPC and journal linking** — `@UUID` enrichers in page content plus a module flag on the actor, maintained in both directions. Not the biography field, which DDB Importer and Plutonium overwrite on re-import.
-- [ ] **Preview and apply gating**, as with HP changes.
+- [x] **Named visibility profiles** — `gm`, `party`, and `players: [...]`, expanding to Foundry ownership maps. `sidecar/journal-visibility.js`'s `resolveVisibilityOwnership()`; `party` is derived from current character ownership, never stored.
+- [x] **Visibility is required, and defaults to GM-only.** `parseJournalWrite` rejects a missing or unrecognized `visibility.profile`; the zod schema has no way to express two visibilities in one call, so mixed-visibility content is built by composition (two separately confirmed calls) rather than by a runtime check.
+- [x] **Explicit page ownership** — `createJournalEntry`/`addJournalPage`/`updateJournalPage` (`module/scripts/prepared-actor-bridge.mjs`) always write the resolved ownership map explicitly on every page; nothing is left to `INHERIT`.
+- [x] **Receipts report resolved names, not IDs.** Every write response's `visibility.visibleTo` and every GM read's `visibility` block name non-GM users, not just their ids (`sidecar/journal-visibility.js`'s `entryVisibility`/`pageVisibility`).
+- [x] **Fail loud on name resolution.** `resolvePlayer()` (`sidecar/journal-visibility.js`) refuses on zero matches or ambiguity (a name matching two different users, or a character owned by more than one), naming the ambiguity in the error rather than guessing. Shared by reads (Stage 2) and writes (Stage 4).
+- [x] **NPC and journal linking** — bidirectional `flags["foundry-mcp-bridge"].linkedJournalEntryId`/`.linkedActorId` on the Actor and JournalEntry (Stage 6), not the biography field. `@UUID` enrichers are ordinary page content, already supported by the write path and the Obsidian importer's two-pass wikilink resolution.
+- [x] **Preview and apply gating**, as with HP changes — `preview_journal_write`/`apply_journal_write` and `preview_link_actor_journal`/`apply_link_actor_journal` follow the same confirmation-token pattern, gated by `FOUNDRY_WRITE_ENABLED` at both the MCP tool and sidecar layers.
 
 **Exit:** an NPC journal can be written with per-player visibility and a receipt naming exactly who can see it.
 
