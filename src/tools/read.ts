@@ -245,15 +245,26 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
   );
 
   // ── JOURNAL ─────────────────────────────────────────────────────
+  // GM-scoped: these return everything, including GM-only material. There
+  // is no permission filtering here — a player-scoped equivalent that
+  // filters by what a named player can actually see is a later addition.
   server.registerTool(
     "search_journal",
     {
-      description: "Full-text search Foundry journal entries by name and content.",
-      inputSchema: { query: z.string().min(1), limit: z.number().int().min(1).max(MAX_LIMIT).optional() },
+      description:
+        "Search campaign journal entries as the GM: matches entry names, page names, and page content. Returns snippets, per-page hit counts, and each entry's classified type/tags. This is the GM view and may include GM-only material.",
+      inputSchema: {
+        query: z.string().min(1),
+        type: z.enum(["location", "person", "faction", "history", "item", "session", "other"]).optional(),
+        tag: z.string().optional(),
+        folder: z.string().optional().describe("Journal folder name or id"),
+        limit: z.number().int().min(1).max(MAX_LIMIT).optional(),
+        offset: z.number().int().min(0).optional(),
+      },
     },
-    async ({ query, limit }) => {
+    async ({ query, type, tag, folder, limit, offset }) => {
       try {
-        const res = await http.get("/api/mcp/journal", { params: { query, limit } });
+        const res = await http.get("/api/mcp/journal", { params: { query, type, tag, folder, limit, offset } });
         return textResult(res.data);
       } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
     },
@@ -261,10 +272,24 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
 
   server.registerTool(
     "get_journal_entry",
-    { description: "Get a journal entry with all page content.", inputSchema: { journalId: z.string().min(1) } },
+    {
+      description: "Get one campaign journal entry with all page content, as the GM, including each page's classified type and a content hash.",
+      inputSchema: { journalId: z.string().min(1) },
+    },
     async ({ journalId }) => {
       try {
         const res = await http.get(`/api/mcp/journal/${journalId}`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "list_journal_folders",
+    { description: "List Foundry journal folders, for filtering search_journal by folder." },
+    async () => {
+      try {
+        const res = await http.get("/api/mcp/journal/folders");
         return textResult(res.data);
       } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
     },

@@ -19,7 +19,28 @@ function fixtureWorld() {
     scenes: [{ _id: "scene-1", name: "Tavern", active: true, tokens: [] }],
     combats: [],
     messages: [],
-    journal: [],
+    journal: [
+      {
+        _id: "journal-1",
+        name: "City of Ravencroft",
+        folder: "folder-locations",
+        flags: { "foundry-mcp-bridge": { knowledge: { type: "location", tags: ["city", "coastal"] } } },
+        pages: [
+          { _id: "page-1", name: "Overview", type: "text", text: { content: "The harbor district of Ravencroft has been quiet lately." } },
+        ],
+      },
+      {
+        _id: "journal-2",
+        name: "Leon Blackstone",
+        pages: [
+          { _id: "page-2", name: "Notes", type: "text", text: { content: "A shopkeeper of no particular renown." } },
+        ],
+      },
+    ],
+    folders: [
+      { _id: "folder-locations", name: "Locations", type: "JournalEntry", folder: null },
+      { _id: "folder-scenes", name: "Scene Folder", type: "Scene", folder: null },
+    ],
     users: [{ _id: "user-1", name: "GM", role: 4, active: true }],
     modules: [{ _id: "mod-1", name: "Test Module", version: "1.0.0", active: true }],
   };
@@ -152,6 +173,54 @@ test("returns 404 for an unknown actor", async () => {
   const res = await request(port(), "GET", "/api/mcp/actors/does-not-exist", { headers: auth() });
   server.close();
   assert.equal(res.status, 404);
+});
+
+// ── Journal ──────────────────────────────────────────────────────────
+
+test("searches the journal by content and returns a snippet", async () => {
+  const { server, port } = startApp();
+  const res = await request(port(), "GET", "/api/mcp/journal?query=Ravencroft", { headers: auth() });
+  server.close();
+  assert.equal(res.status, 200);
+  assert.equal(res.body.scope, "gm");
+  assert.equal(res.body.total, 1);
+  assert.equal(res.body.results[0].entryId, "journal-1");
+  assert.equal(res.body.results[0].pageHits[0].matchCount, 1);
+  assert.match(res.body.results[0].pageHits[0].snippet, /\*\*Ravencroft\*\*/);
+});
+
+test("filters journal search by folder and by classified type", async () => {
+  const { server, port } = startApp();
+  const byFolder = await request(port(), "GET", "/api/mcp/journal?query=Ravencroft&folder=Locations", { headers: auth() });
+  const byType = await request(port(), "GET", "/api/mcp/journal?query=Ravencroft&type=person", { headers: auth() });
+  server.close();
+  assert.equal(byFolder.body.total, 1);
+  assert.equal(byType.body.total, 0);
+});
+
+test("gets one journal entry with full page content and a contentHash", async () => {
+  const { server, port } = startApp();
+  const res = await request(port(), "GET", "/api/mcp/journal/journal-2", { headers: auth() });
+  server.close();
+  assert.equal(res.status, 200);
+  assert.equal(res.body.uuid, "JournalEntry.journal-2");
+  assert.equal(res.body.pages[0].uuid, "JournalEntry.journal-2.JournalEntryPage.page-2");
+  assert.ok(res.body.pages[0].contentHash);
+});
+
+test("returns 404 for an unknown journal entry", async () => {
+  const { server, port } = startApp();
+  const res = await request(port(), "GET", "/api/mcp/journal/does-not-exist", { headers: auth() });
+  server.close();
+  assert.equal(res.status, 404);
+});
+
+test("lists journal folders, excluding folders of other document types", async () => {
+  const { server, port } = startApp();
+  const res = await request(port(), "GET", "/api/mcp/journal/folders", { headers: auth() });
+  server.close();
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.folders.map((f) => f.id), ["folder-locations"]);
 });
 
 test("system-info reports fixture data even when the live Foundry calls fail", async () => {
