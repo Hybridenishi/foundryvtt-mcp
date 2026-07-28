@@ -201,6 +201,7 @@ test("every mutating route is disabled when writes are off", async () => {
     ["POST", "/api/mcp/combats/next-turn"],
     ["POST", "/api/mcp/chat"],
     ["POST", "/api/mcp/journal/write"],
+    ["POST", "/api/mcp/actors/actor-1/link-journal"],
   ];
   for (const [method, path] of routes) {
     const res = await request(port(), method, path, { headers: auth(), body: {} });
@@ -749,6 +750,87 @@ test("journal write preview rejects an unresolvable players reference with a 400
   server.close();
   assert.equal(res.status, 400);
   assert.match(res.body.error, /Cannot resolve player/);
+});
+
+// ── Actor <-> journal linking ─────────────────────────────────────────────
+
+test("actor-journal link: preview resolves and reports current flags; apply sets them bidirectionally through the bridge", async () => {
+  const { server, port } = startApp({ world: fixtureWorldWithOwnership(), deps: { writeEnabled: true } });
+
+  const preview = await request(port(), "POST", "/api/mcp/actors/actor-1/link-journal/preview", {
+    headers: auth(), body: { entryId: "journal-1" },
+  });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.entryId, "journal-1");
+  assert.equal(preview.body.currentLinkedJournalEntryId, null);
+  assert.equal(preview.body.currentLinkedActorId, null);
+  const token = preview.body.confirmation.confirmationToken;
+
+  const clientId = "client-link-1234";
+  const ready = await request(port(), "POST", "/mcp-bridge/ready", { headers: { cookie: "session=abc" }, body: { clientId } });
+  assert.equal(ready.status, 200);
+  const bridgeToken = ready.body.bridgeToken;
+
+  const pollPromise = request(port(), "GET", `/mcp-bridge/poll?clientId=${clientId}`, { headers: { "x-mcp-bridge-token": bridgeToken } });
+  const applyPromise = request(port(), "POST", "/api/mcp/actors/actor-1/link-journal", {
+    headers: auth(), body: { entryId: "journal-1", confirmationToken: token },
+  });
+
+  const polled = await pollPromise;
+  assert.equal(polled.status, 200);
+  assert.equal(polled.body.type, "link-actor-journal");
+  await request(port(), "POST", "/mcp-bridge/respond", {
+    headers: { "x-mcp-bridge-token": bridgeToken },
+    body: { clientId, requestId: polled.body.requestId, result: { actorId: "actor-1", entryId: "journal-1", entryUuid: "JournalEntry.journal-1", linkedJournalEntryId: "journal-1", linkedActorId: "actor-1" } },
+  });
+
+  const apply = await applyPromise;
+  server.close();
+  assert.equal(apply.status, 200);
+  assert.equal(apply.body.ok, true);
+  assert.equal(apply.body.linkedActorId, "actor-1");
+});
+
+test("actor-journal link preview succeeds with no GM bridge client registered at all — it reads the local world snapshot, not the bridge", async () => {
+  const { server, port } = startApp({ world: fixtureWorldWithOwnership() }); // no /mcp-bridge/ready call
+  const res = await request(port(), "POST", "/api/mcp/actors/actor-1/link-journal/preview", {
+    headers: auth(), body: { entryId: "journal-1" },
+  });
+  server.close();
+  assert.equal(res.status, 200);
+});
+
+test("actor-journal link preview 404s on an unknown actor or entry", async () => {
+  const { server, port } = startApp({ world: fixtureWorldWithOwnership() });
+  const badActor = await request(port(), "POST", "/api/mcp/actors/does-not-exist/link-journal/preview", { headers: auth(), body: { entryId: "journal-1" } });
+  const badEntry = await request(port(), "POST", "/api/mcp/actors/actor-1/link-journal/preview", { headers: auth(), body: { entryId: "does-not-exist" } });
+  server.close();
+  assert.equal(badActor.status, 404);
+  assert.equal(badEntry.status, 404);
+});
+
+test("actor-journal link preview rejects a missing entryId with a 400", async () => {
+  const { server, port } = startApp({ world: fixtureWorldWithOwnership() });
+  const res = await request(port(), "POST", "/api/mcp/actors/actor-1/link-journal/preview", { headers: auth(), body: {} });
+  server.close();
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /entryId is required/);
+});
+
+test("actor-journal link apply rejects a token whose entryId does not match what was previewed", async () => {
+  const { server, port } = startApp({ world: fixtureWorldWithOwnership(), deps: { writeEnabled: true } });
+  const preview = await request(port(), "POST", "/api/mcp/actors/actor-1/link-journal/preview", {
+    headers: auth(), body: { entryId: "journal-1" },
+  });
+  assert.equal(preview.status, 200);
+  const token = preview.body.confirmation.confirmationToken;
+
+  const apply = await request(port(), "POST", "/api/mcp/actors/actor-1/link-journal", {
+    headers: auth(), body: { entryId: "journal-2", confirmationToken: token },
+  });
+  server.close();
+  assert.equal(apply.status, 409);
+  assert.match(apply.body.error, /does not match/);
 });
 
 test("index feed enumerates only pages visible to at least one non-GM user, with the visible user id set", async () => {

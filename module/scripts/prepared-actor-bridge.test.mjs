@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { addJournalPage, applyConditionChange, applyHpChange, applySpellSlotAdjustment, auditJournalVisibility, createJournalEntry, executeUtilityActivityUse, handleBridgeRequest, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty, updateJournalPage } from "./prepared-actor-bridge.mjs";
+import { addJournalPage, applyConditionChange, applyHpChange, applySpellSlotAdjustment, auditJournalVisibility, createJournalEntry, executeUtilityActivityUse, handleBridgeRequest, linkActorAndJournal, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty, updateJournalPage } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -784,6 +784,87 @@ test("updateJournalPage throws if the page does not exist on the entry", async (
       () => updateJournalPage({ entryId: "entry-1", pageId: "missing", pages: [{ name: "P", content: "c" }], ownership: { default: 0 } }),
       /was not found/,
     );
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+// ── Actor <-> journal linking ────────────────────────────────────────────
+
+function fakeActorWithFlags(overrides = {}) {
+  const flags = {};
+  return {
+    id: overrides.id ?? "actor-1",
+    name: overrides.name ?? "Actor",
+    async setFlag(scope, key, value) { (flags[scope] ??= {})[key] = value; },
+    getFlag(scope, key) { return flags[scope]?.[key]; },
+  };
+}
+
+function fakeJournalEntryWithFlags(overrides = {}) {
+  const flags = {};
+  return {
+    id: overrides.id ?? "entry-1",
+    uuid: `JournalEntry.${overrides.id ?? "entry-1"}`,
+    name: overrides.name ?? "Entry",
+    async setFlag(scope, key, value) { (flags[scope] ??= {})[key] = value; },
+    getFlag(scope, key) { return flags[scope]?.[key]; },
+  };
+}
+
+// Preview is intentionally not a bridge operation — see the comment on
+// linkActorAndJournal above — so there is no previewActorJournalLink here
+// to test; the sidecar previews this locally from its world snapshot
+// (sidecar/app.test.js covers that).
+
+test("linkActorAndJournal sets flags on both the actor and the entry, bidirectionally, and reads them back", async () => {
+  const actor = fakeActorWithFlags({ id: "actor-1" });
+  const entry = fakeJournalEntryWithFlags({ id: "entry-1" });
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: (id) => (id === "entry-1" ? entry : undefined) } };
+  try {
+    const receipt = await linkActorAndJournal(actor, { entryId: "entry-1" });
+    assert.equal(receipt.linkedJournalEntryId, "entry-1");
+    assert.equal(receipt.linkedActorId, "actor-1");
+    assert.equal(actor.getFlag("foundry-mcp-bridge", "linkedJournalEntryId"), "entry-1");
+    assert.equal(entry.getFlag("foundry-mcp-bridge", "linkedActorId"), "actor-1");
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("linkActorAndJournal throws if the journal entry does not exist", async () => {
+  const actor = fakeActorWithFlags();
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: () => undefined } };
+  try {
+    await assert.rejects(() => linkActorAndJournal(actor, { entryId: "missing" }), /was not found/);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest routes link-actor-journal through the actor-keyed path, requiring a real actor", async () => {
+  const previousGame = globalThis.game;
+  globalThis.game = { actors: { get: () => undefined } };
+  try {
+    await assert.rejects(
+      () => handleBridgeRequest({ type: "link-actor-journal", actorId: "missing", entryId: "entry-1" }),
+      /Actor 'missing' was not found/,
+    );
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest routes link-actor-journal end to end once the actor resolves", async () => {
+  const actor = fakeActorWithFlags({ id: "actor-1" });
+  const entry = fakeJournalEntryWithFlags({ id: "entry-1" });
+  const previousGame = globalThis.game;
+  globalThis.game = { actors: { get: (id) => (id === "actor-1" ? actor : undefined) }, journal: { get: (id) => (id === "entry-1" ? entry : undefined) } };
+  try {
+    const receipt = await handleBridgeRequest({ type: "link-actor-journal", actorId: "actor-1", entryId: "entry-1" });
+    assert.equal(receipt.linkedActorId, "actor-1");
   } finally {
     globalThis.game = previousGame;
   }

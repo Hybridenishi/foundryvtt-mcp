@@ -50,9 +50,9 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (46 total)
+## Tools (48 total)
 
-### Read and service (28 tools)
+### Read and service (27 tools)
 
 | Tool | Description |
 |---|---|
@@ -91,7 +91,7 @@ mcp_servers:
 |---|---|
 | `roll_dice` | Any formula: `1d20+5`, `4d6kh3`, `d%`, `adv`, `dis` |
 
-### Previews (6 read-only tools)
+### Previews (7 read-only tools)
 
 | Tool | Description |
 |---|---|
@@ -101,8 +101,9 @@ mcp_servers:
 | `preview_spell_slot_adjustment` | Preview exact spell-slot values through the GM bridge; returns a short-lived confirmation token. Administrative counter adjustment — does not cast spells. Supports pact magic, character actors only |
 | `preview_item_activity_use` | Read-only eligibility check for one exact, unambiguous embedded dnd5e utility activity with no external target; returns a short-lived confirmation token |
 | `preview_journal_write` | Preview creating a journal entry, or adding/updating one page, with a required, explicit visibility (`gm`/`party`/`players:[...]`); returns the resolved audience by name and a short-lived confirmation token |
+| `preview_link_actor_journal` | Preview linking an actor to a journal entry (not the biography field); reads current link flags from the world snapshot — no GM bridge required |
 
-### Write (11 tools, gated by `FOUNDRY_WRITE_ENABLED`)
+### Write (12 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
 | Tool | Description |
 |---|---|
@@ -112,6 +113,7 @@ mcp_servers:
 | `apply_spell_slot_adjustment` | Apply an exactly matching, previewed spell-slot adjustment through the GM bridge. Stale-state protected — rejects if slots changed since preview |
 | `apply_condition_change` | Apply an exactly previewed standard-condition change through the GM bridge |
 | `apply_journal_write` | Apply an exactly previewed journal write through the GM bridge; the receipt names every player who can see the result, read back from the written document |
+| `apply_link_actor_journal` | Apply an exactly previewed actor-journal link through the GM bridge; sets bidirectional flags on both documents and reads them back as the receipt |
 | `update_actor` | Patch actor system attributes (`system.hp.value`, `system.currency.gp`, etc.) |
 | `create_actor` | Create a minimal actor; use Plutonium for complete 5e characters and creatures |
 | `delete_actor` | Delete an actor by ID |
@@ -167,6 +169,8 @@ PLAYER_API_KEY=<private-player-scoped-api-key>   # Optional. Reaches only /api/m
 | POST | `/api/mcp/actors/:id/spell-slots` | Apply an exactly matching, previewed spell-slot adjustment through the active GM client; stale-state protected |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use/preview` | Validate one exact unambiguous dnd5e utility activity and issue a one-time confirmation token |
 | POST | `/api/mcp/actors/:id/items/:itemId/activities/:activityId/use` | Execute an exactly matching previewed dnd5e utility activity through the active GM client |
+| POST | `/api/mcp/actors/:id/link-journal/preview` | Read-only actor-journal link preview; reads current link flags from the world snapshot (no GM bridge needed); issues a one-time confirmation token |
+| POST | `/api/mcp/actors/:id/link-journal` | Apply an exactly matching, previewed actor-journal link through the active GM client; sets bidirectional flags on both documents |
 | GET | `/api/mcp/actors/:id/items` | Paginated embedded Item list |
 | GET | `/api/mcp/actors/:id/activities` | Paginated embedded Activity list |
 | GET | `/api/mcp/actors/:id/items/:itemId/activities/:activityId` | Concise discovery-only detail for one embedded Activity |

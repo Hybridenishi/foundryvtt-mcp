@@ -633,6 +633,36 @@ export async function updateJournalPage(request) {
 // them. Journal operations (this stage's audit, and Stage 4's writes) have
 // no actor at all; adding a case here rather than to the actor-keyed switch
 // is what keeps that lookup from being a mandatory gate for every request.
+// Bidirectional flags["foundry-mcp-bridge"] cross-reference between an
+// Actor and a JournalEntry (docs/ROADMAP.md's NPC/journal linking item) —
+// deliberately not the Actor's biography field, which DDB Importer and
+// Plutonium overwrite on re-import. There is no preview-side bridge
+// operation here: flags are ordinary document data already present in the
+// sidecar's getWorld() snapshot, so the sidecar previews this locally
+// (sidecar/app.js) and only reaches the bridge for the actual write, unlike
+// runtime-derived previews (HP, spell slots) that genuinely need the live
+// client.
+export async function linkActorAndJournal(actor, request) {
+  const entry = globalThis.game?.journal?.get(request?.entryId);
+  if (!entry) throw new Error(`Journal entry '${request?.entryId}' was not found by the active GM client.`);
+  if (typeof actor.setFlag !== "function" || typeof entry.setFlag !== "function") {
+    throw new Error("The Foundry setFlag method is unavailable.");
+  }
+  await actor.setFlag(MODULE_ID, "linkedJournalEntryId", entry.id);
+  await entry.setFlag(MODULE_ID, "linkedActorId", actor.id);
+
+  const linkedJournalEntryId = typeof actor.getFlag === "function" ? actor.getFlag(MODULE_ID, "linkedJournalEntryId") : entry.id;
+  const linkedActorId = typeof entry.getFlag === "function" ? entry.getFlag(MODULE_ID, "linkedActorId") : actor.id;
+  if (linkedJournalEntryId !== entry.id || linkedActorId !== actor.id) {
+    throw new Error("Read-back of the actor-journal link does not match what was requested.");
+  }
+  return {
+    actorId: actor.id, actorName: actor.name,
+    entryId: entry.id, entryUuid: entry.uuid, entryName: entry.name,
+    linkedJournalEntryId, linkedActorId,
+  };
+}
+
 const ACTORLESS_OPERATIONS = {
   "prepared-party-summary": () => summarizePreparedParty(globalThis.game?.actors?.contents ?? globalThis.game?.actors ?? []),
   "audit-journal-visibility": () => auditJournalVisibility(
@@ -676,6 +706,8 @@ export async function handleBridgeRequest(request) {
       return previewUtilityActivityUse(actor, request);
     case "use-utility-activity":
       return executeUtilityActivityUse(actor, request);
+    case "link-actor-journal":
+      return linkActorAndJournal(actor, request);
     default:
       throw new Error(`Unsupported MCP Bridge request type '${request.type}'.`);
   }

@@ -11,12 +11,14 @@ const TEMPORARY_HP_CONFIRMATION_TTL = 2 * 60_000;
 const CONDITION_CHANGE_CONFIRMATION_TTL = 2 * 60_000;
 const ACTIVITY_USE_CONFIRMATION_TTL = 2 * 60_000;
 const SPELL_SLOT_ADJUSTMENT_CONFIRMATION_TTL = 2 * 60_000;
+const ACTOR_JOURNAL_LINK_CONFIRMATION_TTL = 2 * 60_000;
 
 const hpChangeConfirmations = new Map();
 const temporaryHpConfirmations = new Map();
 const conditionChangeConfirmations = new Map();
 const activityUseConfirmations = new Map();
 const spellSlotAdjustmentConfirmations = new Map();
+const actorJournalLinkConfirmations = new Map();
 
 const VALID_DAMAGE_TYPES = new Set([
   "acid", "bludgeoning", "cold", "fire", "force",
@@ -182,6 +184,37 @@ function consumeSpellSlotAdjustmentConfirmation(token, actorId, adjustments) {
   );
 }
 
+// Actor <-> journal linking — a bidirectional flags["foundry-mcp-bridge"]
+// cross-reference (docs/ROADMAP.md Phase 5's NPC/journal linking item),
+// deliberately not the biography field, which DDB Importer and Plutonium
+// overwrite on re-import. Low-stakes compared to a visibility change (it
+// links two documents the caller can already read by other means, and
+// changes no ownership), but AGENTS.md's write pattern applies to every
+// mutation, so this follows the same preview -> confirm -> apply shape as
+// everything else rather than being a special case.
+function parseActorJournalLink(body) {
+  const entryId = body?.entryId;
+  if (typeof entryId !== "string" || entryId.length === 0) throw new Error("entryId is required");
+  return { entryId };
+}
+
+function actorJournalLinkBinding(actorId, entryId) {
+  return { actorId, entryId, operation: "link-actor-journal" };
+}
+
+function issueActorJournalLinkConfirmation(actorId, entryId) {
+  return issueConfirmation(
+    actorJournalLinkConfirmations,
+    randomUUID(),
+    actorJournalLinkBinding(actorId, entryId),
+    ACTOR_JOURNAL_LINK_CONFIRMATION_TTL,
+  );
+}
+
+function consumeActorJournalLinkConfirmation(token, actorId, entryId) {
+  consumeConfirmation(actorJournalLinkConfirmations, token, actorJournalLinkBinding(actorId, entryId), "actor-journal-link");
+}
+
 // Journal writes — preview/apply gating for create-entry, add-page, and
 // update-page, following the same shape as every other guarded operation:
 // a scoped, single-use confirmation token binds the request's identity
@@ -338,6 +371,9 @@ module.exports = {
   adjustmentsKey,
   issueSpellSlotAdjustmentConfirmation,
   consumeSpellSlotAdjustmentConfirmation,
+  parseActorJournalLink,
+  issueActorJournalLinkConfirmation,
+  consumeActorJournalLinkConfirmation,
   parseJournalWrite,
   canonicalJson,
   digest,

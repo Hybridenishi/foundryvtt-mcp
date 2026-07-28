@@ -125,10 +125,29 @@ This is the highest-consequence write on the roadmap, and not for rules reasons.
 **Goal:** let players query their own characters without granting GM reach.
 
 - [ ] Extend bridge pairing to non-GM users, with the token carrying the Foundry user id and role.
-- [ ] Evaluate every call against that user's document ownership as Foundry already sees it. No parallel permission model.
+- [x] Evaluate every call against that user's document ownership as Foundry already sees it, for journals: `sidecar/journal-visibility.js` reproduces Foundry's own resolution from the world snapshot, and `audit-journal-visibility` proves it against real `testUserPermission()` calls through the GM bridge (see Phase 5's exit criteria). Not yet extended to actors or other document types — this is scoped to what the campaign-knowledge-journal work needed.
 - [ ] Add a GM approval queue for player-initiated writes, reusing the existing scoped single-use confirmation helper with the GM as approver. An in-world chat card is the natural approval surface, since the GM is already looking at Foundry.
 
 **Exit:** a player can read their own character, and any write they request waits for GM approval.
+
+### The player-facing consumer: a separate repository, not this one
+
+The campaign-knowledge-journal work (Phases 5-6's journal half) was built with a specific first consumer in mind — a player-facing knowledge service, referred to during design as **Iris** — but that service is explicitly **out of scope for this repo** and belongs in its own. What follows is the contract this repo has already committed to, and the boundary that keeps a bug in that other service from being able to reach anything it shouldn't.
+
+**The boundary is the credential, not the data source.** A player-facing consumer holds only `PLAYER_API_KEY` — read-only, permission-filtered, structurally unable to reach GM routes, actor routes, or any write route (a separate Express router with its own auth check, mounted ahead of the GM-only middleware — see `sidecar/app.js`'s `playerRouter`). This is deliberately not split by subject matter (journal reads to one service, session/event data to another): a question like "what did we learn about X last session?" spans both, and a credential-scoped boundary survives that consumer later reading the Phase 4 event log under the same key, where a subject-matter split would not.
+
+**What this repo already owes it, shipped:**
+- `GET /api/mcp/players` — the roster of non-GM users and the character names they own; the stable references everything else takes as `:userRef`.
+- `GET /api/mcp/players/:userRef/journal` and `/:userRef/journal/:entryId` — permission-filtered search and detail, indistinguishable between "hidden" and "doesn't exist" (verified by a byte-identical-response test).
+- `GET /api/mcp/players/index-feed` — full enumeration (not a changed-since feed — see below) of every journal page visible to at least one non-GM user, each with a `contentHash` for incremental reindexing and the set of user ids who can see it. GM-only content never appears here, server-side, regardless of what the consumer does with the feed.
+- `schemaVersion: 1` on every response from the four routes above.
+- Honest error semantics: `400` for an unresolvable player reference, `503` when the sidecar's Foundry socket is down, `200` with `total: 0` for "nothing this player can see" — never a distinct status for "hidden" versus "absent".
+
+**What this repo must not own**, if that service is ever built: the Discord (or other platform) identity mapping to a Foundry user id; any vector store, embeddings, or recall index; answer composition (a player-facing service's model should compose prose from what the filtered routes return — content it never receives cannot leak from it); or any write path. The player-scoped surface here is read-only, permanently — a player-initiated write is this phase's still-open GM approval queue item above, a different mechanism with a human in the loop, not something a knowledge service does directly.
+
+**Foundry is the index's source of truth, not an Obsidian vault.** If a player-facing service indexes campaign content for retrieval, it should index what `GET /api/mcp/players/index-feed` returns — post-redaction, permission-live Foundry content — not the DM's original notes. The vault is unredacted by definition; a vault-sourced index has to reconstruct which parts are safe via a separate note-to-journal mapping, and that mapping drifts (renames, splits, merged notes) in a way that is a silent leak: permission gets checked against one document while retrieved text comes from another that was never checked at all. Indexing what `scripts/import-obsidian.mjs` actually wrote — where the retrieval unit (a journal page) and the permission unit (that same page's ownership) are the same object — doesn't have that failure mode. The importer already keeps the door open for authoring-quality retrieval without the vault as the index: it preserves each page's original markdown under `flags["foundry-mcp-bridge"].obsidian.markdown`, so an indexer can embed clean markdown while still keying strictly to Foundry-resolved ids and live permissions.
+
+**The index feed enumerates fully rather than reporting deltas, on purpose.** The dangerous mutation for a permission-scoped index is not an edit, it's a *narrowing* — an entry moving from party-visible to GM-only. A hash-based changed-since feed would report "nothing changed" for exactly that case and leave stale, now-forbidden content sitting in a downstream index. Full enumeration means a consumer diffs the returned id set against its own on every sweep and drops whatever is absent, which handles narrowing and deletion with one mechanism and no tombstone protocol needed. Revisit this once Phase 4's event tap exists — an event-driven feed that explicitly emits narrowing events would be strictly better, but nothing before Phase 4 detects a document change at all, so building one earlier means re-deriving it from full world diffs, which is enumeration relocated, not avoided.
 
 ## Phase 7 — Module support tier
 

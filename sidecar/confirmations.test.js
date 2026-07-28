@@ -11,6 +11,9 @@ const {
   digest,
   issueJournalWriteConfirmation,
   consumeJournalWriteConfirmation,
+  parseActorJournalLink,
+  issueActorJournalLinkConfirmation,
+  consumeActorJournalLinkConfirmation,
 } = require("./confirmations");
 
 // ── parseHpChange ────────────────────────────────────────────────────
@@ -256,4 +259,34 @@ test("a journal-write confirmation token can only be consumed once", () => {
   const { confirmationToken } = issueJournalWriteConfirmation(parsed, ownership, []);
   consumeJournalWriteConfirmation(confirmationToken, parsed, ownership);
   assert.throws(() => consumeJournalWriteConfirmation(confirmationToken, parsed, ownership), /valid, unexpired/);
+});
+
+// ── parseActorJournalLink / actor-journal-link confirmation ─────────────
+
+test("parseActorJournalLink requires entryId", () => {
+  assert.deepEqual(parseActorJournalLink({ entryId: "e1" }), { entryId: "e1" });
+  assert.throws(() => parseActorJournalLink({}), /entryId is required/);
+  assert.throws(() => parseActorJournalLink({ entryId: "" }), /entryId is required/);
+});
+
+test("an actor-journal-link confirmation is rejected by an apply for a different entryId", () => {
+  const { confirmationToken } = issueActorJournalLinkConfirmation("actor-1", "entry-1");
+  assert.throws(
+    () => consumeActorJournalLinkConfirmation(confirmationToken, "actor-1", "entry-2"),
+    /does not match/,
+  );
+});
+
+test("an actor-journal-link confirmation is rejected by an apply for a different actorId", () => {
+  const { confirmationToken } = issueActorJournalLinkConfirmation("actor-1", "entry-1");
+  assert.throws(
+    () => consumeActorJournalLinkConfirmation(confirmationToken, "actor-2", "entry-1"),
+    /does not match/,
+  );
+});
+
+test("an actor-journal-link confirmation token can only be consumed once", () => {
+  const { confirmationToken } = issueActorJournalLinkConfirmation("actor-1", "entry-1");
+  consumeActorJournalLinkConfirmation(confirmationToken, "actor-1", "entry-1");
+  assert.throws(() => consumeActorJournalLinkConfirmation(confirmationToken, "actor-1", "entry-1"), /valid, unexpired/);
 });

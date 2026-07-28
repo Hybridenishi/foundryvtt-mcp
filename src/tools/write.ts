@@ -335,6 +335,39 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
   );
 
   server.registerTool(
+    "preview_link_actor_journal",
+    {
+      description:
+        "Preview linking an actor to a journal entry, deliberately not the actor's biography field (DDB Importer and Plutonium overwrite that on re-import). Read-only, and needs no active GM bridge (it reads current link flags from the world snapshot, not from Foundry live): returns both documents' current link flags and a short-lived confirmation token for apply_link_actor_journal, which does require the bridge to actually write them.",
+      inputSchema: { actorId: z.string().min(1), entryId: z.string().min(1) },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, entryId }) => {
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/link-journal/preview`, { entryId });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "apply_link_actor_journal",
+    {
+      description:
+        "Apply an exactly previewed actor-journal link through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact short-lived token from preview_link_actor_journal. Sets flags[\"foundry-mcp-bridge\"].linkedJournalEntryId on the actor and .linkedActorId on the journal entry, bidirectionally, and reads both back as the receipt.",
+      inputSchema: { actorId: z.string().min(1), entryId: z.string().min(1), confirmationToken: z.string().uuid() },
+      annotations: { destructiveHint: false },
+    },
+    async ({ actorId, entryId, confirmationToken }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/link-journal`, { entryId, confirmationToken });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
     "preview_journal_write",
     {
       description:
