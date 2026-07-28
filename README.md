@@ -50,9 +50,9 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (39 total)
+## Tools (42 total)
 
-### Read and service (23 tools)
+### Read and service (26 tools)
 
 | Tool | Description |
 |---|---|
@@ -77,6 +77,9 @@ mcp_servers:
 | `search_journal` | Search journal entries by name, page content, type, tag, and folder; returns snippets and per-page hits |
 | `get_journal_entry` | Journal entry with all page content, classified type, and per-page content hashes |
 | `list_journal_folders` | Journal folders, for filtering `search_journal` |
+| `list_players` | Non-GM users and the character names they own — stable references for the player-scoped tools below |
+| `search_player_knowledge` | Search the journal strictly as one named player would see it in Foundry; an empty result never implies the subject doesn't exist |
+| `get_player_journal_entry` | One journal entry as one named player would see it; unreadable entries and hidden pages report as not found, identically to a nonexistent id |
 | `get_users` | All users with roles and online status |
 | `refresh_world` | Verify sidecar connectivity |
 
@@ -134,6 +137,7 @@ FOUNDRY_PASSWORD=<private-foundry-account-password>
 PORT=30001
 API_KEY=<private-sidecar-api-key>
 FOUNDRY_WRITE_ENABLED=true             # Must be set here as well as in the MCP client to enable mutations
+PLAYER_API_KEY=<private-player-scoped-api-key>   # Optional. Reaches only /api/mcp/players/* — never GM routes, never writes
 ```
 
 ## Endpoints (sidecar)
@@ -174,9 +178,13 @@ FOUNDRY_WRITE_ENABLED=true             # Must be set here as well as in the MCP 
 | POST | `/api/mcp/combats/next-turn` | Advance turn |
 | GET | `/api/mcp/chat-log` | Chat messages |
 | POST | `/api/mcp/chat` | Post message |
-| GET | `/api/mcp/journal` | Search journal (name, page content, type, tag, folder) |
-| GET | `/api/mcp/journal/:id` | One entry, all pages, with content hashes |
+| GET | `/api/mcp/journal` | Search journal (name, page content, type, tag, folder); each result includes a `visibility` block naming which non-GM users can see it |
+| GET | `/api/mcp/journal/:id` | One entry, all pages, with content hashes and per-page `visibility` |
 | GET | `/api/mcp/journal/folders` | Journal folder tree |
+| GET | `/api/mcp/players` | Non-GM users and the character names they own — accepts `API_KEY` or `PLAYER_API_KEY` |
+| GET | `/api/mcp/players/index-feed` | Every journal page visible to at least one non-GM user, with a content hash and its visible-user-id set; full enumeration, not a delta feed — accepts `API_KEY` or `PLAYER_API_KEY` |
+| GET | `/api/mcp/players/:userRef/journal` | Journal search filtered to exactly what `:userRef` (a user id, user name, or owned character name) can see in Foundry — accepts `API_KEY` or `PLAYER_API_KEY` |
+| GET | `/api/mcp/players/:userRef/journal/:entryId` | One entry as `:userRef` would see it; unreadable or entirely-hidden entries 404 identically to a nonexistent id — accepts `API_KEY` or `PLAYER_API_KEY` |
 | GET | `/api/mcp/users` | All users |
 
 `/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. A GM browser pairs by presenting its existing Foundry session cookie; the sidecar validates that session and issues an in-memory, per-client token that expires when the bridge goes idle. No shared API key is shipped in the module. The separate sidecar API key must be supplied privately through environment configuration and must never be committed.

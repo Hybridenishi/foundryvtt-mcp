@@ -20,7 +20,18 @@ const {
   buildFoldersById,
   entryDetail,
   journalFolderTree,
+  contentHash,
 } = require("./journal-search");
+const {
+  isGm,
+  canReadEntry,
+  canReadPage,
+  ownerUserIds,
+  resolvePlayer,
+  visibleJournalFor,
+  describeSearchResult,
+  describeEntryDetail,
+} = require("./journal-visibility");
 const {
   parseHpChange,
   issueHpChangeConfirmation,
@@ -58,11 +69,14 @@ function contentRulesFromWorld(world) {
   return [...rules].sort();
 }
 
-// deps: { apiKey, writeEnabled, foundryUrl, isConnected(), getWorld(),
-//         emitModifyDocument(payload), validateBridgeGmSession(req),
+// deps: { apiKey, playerApiKey, writeEnabled, foundryUrl, isConnected(),
+//         getWorld(), emitModifyDocument(payload), validateBridgeGmSession(req),
 //         getMcpUserId() }
+// playerApiKey is optional. When unset, only apiKey can reach the
+// player-scoped routes — there is no separate "not configured" error path,
+// it simply never matches, the same way a wrong key never matches.
 function createApp(deps) {
-  const { apiKey, writeEnabled, foundryUrl, isConnected, getWorld, emitModifyDocument, validateBridgeGmSession, getMcpUserId } = deps;
+  const { apiKey, playerApiKey, writeEnabled, foundryUrl, isConnected, getWorld, emitModifyDocument, validateBridgeGmSession, getMcpUserId } = deps;
   // Overridable only so tests can exercise the timeout path in milliseconds
   // instead of real seconds; production always gets the real default.
   const preparedActorTimeoutMs = deps.preparedActorTimeoutMs ?? PREPARED_ACTOR_TIMEOUT;
@@ -208,6 +222,133 @@ function createApp(deps) {
     else return res.status(400).json({ error: "A result or error is required" });
     res.json({ ok: true, requestId });
   });
+
+  // Player-scoped routes, mounted before the GM-only auth middleware below
+  // so they can accept a second, narrower credential. Every route here is
+  // read-only and permission-filtered by sidecar/journal-visibility.js;
+  // none of them can reach GM-only content or any write route — path
+  // segment, not a query parameter, is what makes that a structural
+  // property rather than something a caller can opt out of by omission.
+  const playerRouter = express.Router();
+
+  playerRouter.use((req, res, next) => {
+    const key = req.headers["x-api-key"];
+    const authorized = key === apiKey || (Boolean(playerApiKey) && key === playerApiKey);
+    if (!authorized) return res.status(401).json({ error: "Unauthorized" });
+    if (!isConnected()) return res.status(503).json({ error: "Not connected" });
+    next();
+  });
+
+  function resolveOrRefuse(w, userRef, res) {
+    const { user, reason } = resolvePlayer(w.users, w.actors, userRef);
+    if (!user) {
+      res.status(400).json({ error: `Unknown player '${userRef}' (${reason}). See GET /api/mcp/players for valid references.` });
+      return null;
+    }
+    return user;
+  }
+
+  playerRouter.get("/", async (_req, res) => {
+    try {
+      const w = await getWorld();
+      const actors = collectionValues(w.actors);
+      const players = collectionValues(w.users).filter((u) => !isGm(u)).map((u) => ({
+        userId: u._id,
+        name: u.name,
+        characterNames: actors.filter((a) => a.type === "character" && ownerUserIds(a).includes(u._id)).map((a) => a.name),
+      }));
+      res.json({ schemaVersion: 1, players });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Full enumeration of every entry/page visible to at least one non-GM
+  // user — not a changed-since feed. See docs/ROADMAP.md and the plan doc:
+  // the dangerous mutation is an entry *narrowing* from party-visible to
+  // GM-only, which a content-hash delta would silently miss. A consumer
+  // diffs the returned uuid set against its own index each sweep and drops
+  // anything absent, which handles narrowing and deletion with one
+  // mechanism. GM-only pages are excluded here, server-side, so "the index
+  // holds no GM content" is a property this route enforces.
+  playerRouter.get("/index-feed", async (_req, res) => {
+    try {
+      const w = await getWorld();
+      const nonGmUsers = collectionValues(w.users).filter((u) => !isGm(u));
+      const items = [];
+      for (const entry of collectionValues(w.journal)) {
+        for (const page of collectionValues(entry.pages)) {
+          const visibleTo = nonGmUsers.filter((u) => canReadPage(entry, page, u)).map((u) => u._id);
+          if (visibleTo.length === 0) continue;
+          const content = page.text?.content ?? "";
+          items.push({
+            entryUuid: `JournalEntry.${entry._id}`,
+            pageUuid: `JournalEntry.${entry._id}.JournalEntryPage.${page._id}`,
+            entryName: entry.name,
+            pageName: page.name,
+            content,
+            contentHash: contentHash(content),
+            visibleTo,
+          });
+        }
+      }
+      res.json({ schemaVersion: 1, total: items.length, items });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  playerRouter.get("/:userRef/journal", async (req, res) => {
+    try {
+      const w = await getWorld();
+      const user = resolveOrRefuse(w, req.params.userRef, res);
+      if (!user) return;
+      const foldersById = buildFoldersById(w.folders);
+      const visible = visibleJournalFor(w.journal, user);
+      const { total, returned, results } = searchJournal(visible, foldersById, req.query);
+      res.json({
+        schemaVersion: 1,
+        scope: "player",
+        asPlayer: { userId: user._id, name: user.name },
+        total,
+        returned,
+        results: results.map(({ entryId, entryName, uuid, nameMatched, pageHits }) => ({ entryId, entryName, uuid, nameMatched, pageHits })),
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  playerRouter.get("/:userRef/journal/:entryId", async (req, res) => {
+    try {
+      const w = await getWorld();
+      const user = resolveOrRefuse(w, req.params.userRef, res);
+      if (!user) return;
+      const entry = collectionValues(w.journal).find((j) => j._id === req.params.entryId);
+      if (!entry || !canReadEntry(entry, user)) return res.status(404).json({ error: "Not found" });
+      const allPages = collectionValues(entry.pages);
+      const readablePages = allPages.filter((p) => canReadPage(entry, p, user));
+      // Entry-level access alone does not guarantee any content: a GM may
+      // leave every page explicitly GM-only under an otherwise-visible
+      // entry. That case must read as "not found", identically to a
+      // nonexistent id, not as an empty-but-confirmed-to-exist entry — see
+      // journal-visibility.js's visibleJournalFor for the same rule applied
+      // to search.
+      if (allPages.length > 0 && readablePages.length === 0) return res.status(404).json({ error: "Not found" });
+      const foldersById = buildFoldersById(w.folders);
+      const detail = entryDetail(entry, foldersById);
+      const readablePageIds = new Set(readablePages.map((p) => p._id));
+      res.json({
+        schemaVersion: 1,
+        scope: "player",
+        asPlayer: { userId: user._id, name: user.name },
+        _id: detail._id,
+        name: detail.name,
+        uuid: detail.uuid,
+        pages: detail.pages
+          .filter((p) => readablePageIds.has(p._id))
+          .map(({ _id, uuid, name, type, content, contentHash: hash }) => ({ _id, uuid, name, type, content, contentHash: hash })),
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  playerRouter.use((_req, res) => res.status(404).json({ error: "Not found" }));
+
+  app.use("/api/mcp/players", playerRouter);
 
   app.use((req, res, next) => {
     if (req.headers["x-api-key"] !== apiKey) return res.status(401).json({ error: "Unauthorized" });
@@ -545,14 +686,23 @@ function createApp(deps) {
   });
 
   // Journal — GM-scoped. Returns full search results including any
-  // GM-only material; there is no permission filtering at this route.
-  // Player-scoped equivalents (which do filter) are a later stage.
+  // GM-only material, plus a `visibility` block naming exactly which
+  // non-GM users (if any) can see each entry/page; there is no permission
+  // *filtering* at this route. Player-scoped, filtered equivalents are
+  // below, under /api/mcp/players.
   app.get("/api/mcp/journal", async (req, res) => {
     try {
       const w = await getWorld();
       const foldersById = buildFoldersById(w.folders);
-      const { total, returned, results } = searchJournal(collectionValues(w.journal), foldersById, req.query);
-      res.json({ scope: "gm", total, returned, results });
+      const journalEntries = collectionValues(w.journal);
+      const { total, returned, results } = searchJournal(journalEntries, foldersById, req.query);
+      const rawById = new Map(journalEntries.map((e) => [e._id, e]));
+      res.json({
+        scope: "gm",
+        total,
+        returned,
+        results: results.map((r) => describeSearchResult(rawById.get(r.entryId), r, w.users)),
+      });
     }
     catch(e) { res.status(500).json({ error: e.message }); }
   });
@@ -570,7 +720,8 @@ function createApp(deps) {
       const entry = collectionValues(w.journal).find(j => j._id === req.params.id);
       if (!entry) return res.status(404).json({ error: "Not found" });
       const foldersById = buildFoldersById(w.folders);
-      res.json(entryDetail(entry, foldersById));
+      const detail = entryDetail(entry, foldersById);
+      res.json(describeEntryDetail(entry, detail, w.users));
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
 

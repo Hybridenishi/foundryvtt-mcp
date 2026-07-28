@@ -295,6 +295,66 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
     },
   );
 
+  // ── PLAYER-SCOPED JOURNAL ──────────────────────────────────────────
+  // Permission-filtered equivalents of the GM journal tools above: results
+  // are strictly what the named player has at least Observer permission on
+  // in Foundry. An empty result must never be read as "this doesn't exist"
+  // — only as "this player has no visibility into it". Use these, never the
+  // GM tools above, when answering a question on a specific player's behalf.
+  server.registerTool(
+    "list_players",
+    {
+      description: "List non-GM Foundry users and the player-character names they own. These are the stable references search_player_knowledge and get_player_journal_entry accept as `player`.",
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      try {
+        const res = await http.get("/api/mcp/players");
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "search_player_knowledge",
+    {
+      description:
+        "Search the campaign journal strictly as one named player would see it in Foundry: only entries and pages that player has at least Observer permission on. An empty result means nothing was found for that player — it does NOT mean the subject doesn't exist in the world, only that this player has no visibility into it. Never infer non-existence from an empty result, and never fall back to search_journal (the GM view) to answer on a player's behalf.",
+      inputSchema: {
+        player: z.string().min(1).describe("Foundry user id, user name, or the name of a character that player owns"),
+        query: z.string().min(1),
+        limit: z.number().int().min(1).max(MAX_LIMIT).optional(),
+        offset: z.number().int().min(0).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ player, query, limit, offset }) => {
+      try {
+        const res = await http.get(`/api/mcp/players/${encodeURIComponent(player)}/journal`, { params: { query, limit, offset } });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "get_player_journal_entry",
+    {
+      description:
+        "Get one journal entry strictly as one named player would see it: pages that player cannot observe are absent, and if the player cannot observe the entry at all — or none of its pages — this reports 'not found', identically to a nonexistent id. Never fall back to get_journal_entry (the GM view) to answer on a player's behalf.",
+      inputSchema: {
+        player: z.string().min(1).describe("Foundry user id, user name, or the name of a character that player owns"),
+        journalId: z.string().min(1),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ player, journalId }) => {
+      try {
+        const res = await http.get(`/api/mcp/players/${encodeURIComponent(player)}/journal/${encodeURIComponent(journalId)}`);
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
   // ── USERS ───────────────────────────────────────────────────────
   server.registerTool(
     "get_users",

@@ -35,6 +35,8 @@ Two-layer bridge:
 │   ├── confirmations.js     # Per-operation request validators + confirmation-token issue/consume wrappers
 │   ├── confirmation.js      # The generic confirmation primitive: binding/payload storage and symmetric matching
 │   ├── actor-utils.js       # Raw-actor summarization and pagination helpers
+│   ├── journal-search.js    # Journal search, classification, and detail assembly — ownership-agnostic
+│   ├── journal-visibility.js # Foundry ownership resolution and the player-scoped, permission-filtered views built on it
 │   ├── bridge-auth.js       # Constant-time bridge-token comparison
 │   ├── *.test.js             # node --test unit and route tests for the files above
 │   ├── package-lock.json    # Tracked so the Dockerfile's `npm ci` is reproducible on a fresh host
@@ -87,6 +89,8 @@ See [`README.md`'s "Endpoints (sidecar)" table](../README.md#endpoints-sidecar) 
 Set `FOUNDRY_DEPLOY_TARGET`, `FOUNDRY_COMPOSE_DIR`, `FOUNDRY_SIDECAR_DIR`, and `FOUNDRY_MODULE_DIR` for your host, then run `npm run deploy:foundry`. The script backs up and copies the sidecar/module runtime files, validates the remote Compose configuration, rebuilds only the sidecar, and checks its private API from inside the container. It does not print secrets or mutate Foundry world data.
 
 Set `FOUNDRY_WRITE_ENABLED=true` in both the MCP client and the sidecar container only when enabling mutations. The sidecar independently rejects every mutation route when that setting is absent or false.
+
+`PLAYER_API_KEY` is a second, optional sidecar credential scoped to `/api/mcp/players/*` only — it cannot reach any GM route or any write route, by construction (a separate Express router with its own auth check, mounted ahead of the GM-only middleware), not by convention. Leave it unset until a player-facing consumer (e.g. the Iris knowledge service described in the campaign-knowledge-journal plan) actually needs it; the routes simply stay reachable by the regular `API_KEY` alone until then.
 
 The `traefik/` directory is an optional example only. Any reverse proxy is suitable if it preserves the Foundry browser session cookie while forwarding the same-origin `/mcp-bridge` route to the sidecar.
 

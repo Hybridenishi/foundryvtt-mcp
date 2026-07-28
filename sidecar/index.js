@@ -6,6 +6,11 @@ const FOUNDRY_URL = process.env.FOUNDRY_URL || "http://foundry:30000";
 const USERNAME = process.env.FOUNDRY_USERNAME || "mcp-api";
 const PASSWORD = process.env.FOUNDRY_PASSWORD;
 const API_KEY = process.env.API_KEY;
+// Optional, second, narrower credential scoped to the player-facing routes
+// (see sidecar/app.js's playerRouter). Unlike API_KEY, its absence is not
+// fatal — the player routes simply stay reachable by API_KEY only until
+// this is configured.
+const PLAYER_API_KEY = process.env.PLAYER_API_KEY || null;
 const PORT = parseInt(process.env.PORT || "30001", 10);
 const TIMEOUT = 30_000;
 const BRIDGE_SESSION_TIMEOUT = 8_000;
@@ -18,6 +23,34 @@ if (!PASSWORD) throw new Error("FOUNDRY_PASSWORD must be set for the sidecar acc
 let socket = null;
 let connected = false;
 let mcpUserId = null;
+
+// Bounded reconnect: on any post-startup disconnect, redo the full 4-step
+// handshake from scratch (a fresh session cookie may be required if the old
+// one expired during the outage) with capped exponential backoff, forever —
+// giving up permanently would just reintroduce the manual-restart problem
+// this exists to fix. "Bounded" means the delay is capped and only one
+// retry loop ever runs at a time, not that it stops retrying.
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempt);
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    reconnectAttempt += 1;
+    try {
+      await connect();
+      reconnectAttempt = 0;
+      console.log("Reconnected to Foundry.");
+    } catch (err) {
+      console.error(`Reconnect attempt failed: ${err.message}`);
+      scheduleReconnect();
+    }
+  }, delay);
+}
 
 function isConnected() {
   return connected && Boolean(socket?.connected);
@@ -68,16 +101,29 @@ async function authenticate(session, userId) {
 }
 
 async function connect() {
+  // A prior socket from an earlier attempt or a since-dropped connection
+  // must not keep running (and must not fire its own "disconnect" handler,
+  // which would schedule a second, redundant reconnect loop).
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+  }
+
   const session = await getSessionCookie();
   const userId = await resolveUserId(session);
   await authenticate(session, userId);
   console.log(`Authenticated as ${USERNAME} (${userId})`);
   mcpUserId = userId;
 
+  // Manual reconnection only: driving the full 4-step handshake ourselves
+  // on every reconnect (rather than letting Socket.IO's own reconnection
+  // resume the old transport) is what lets a session that expired during
+  // the outage be replaced with a fresh one.
   socket = socketIO(FOUNDRY_URL, {
     transports: ["websocket"],
     extraHeaders: { Cookie: `session=${session}` },
     timeout: TIMEOUT,
+    reconnection: false,
   });
 
   return new Promise((resolve, reject) => {
@@ -94,6 +140,7 @@ async function connect() {
     socket.on("disconnect", (reason) => {
       connected = false;
       console.error(`Foundry socket disconnected: ${reason}`);
+      scheduleReconnect();
     });
   });
 }
@@ -153,6 +200,7 @@ function validateBridgeGmSession(req) {
 
 const app = createApp({
   apiKey: API_KEY,
+  playerApiKey: PLAYER_API_KEY,
   writeEnabled: WRITE_ENABLED,
   foundryUrl: FOUNDRY_URL,
   isConnected,
