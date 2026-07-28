@@ -493,10 +493,48 @@ export async function executeUtilityActivityUse(actor, request) {
   };
 }
 
-async function handleBridgeRequest(request) {
-  if (request.type === "prepared-party-summary") {
-    return summarizePreparedParty(globalThis.game?.actors?.contents ?? globalThis.game?.actors ?? []);
+// Foundry's own ground truth for journal permission, computed via each
+// document's real testUserPermission() — the same method Foundry itself
+// uses for access control, on the same document instances. This function's
+// only job is to report what Foundry says; the sidecar independently
+// computes its own answer from raw ownership maps
+// (sidecar/journal-visibility.js) and diffs the two. Any disagreement means
+// the sidecar's cache of Foundry's ownership model has drifted.
+export function auditJournalVisibility(journalEntries, users) {
+  const nonGmUsers = [...users].filter((user) => !user.isGM);
+  const rows = [];
+  for (const entry of journalEntries) {
+    for (const user of nonGmUsers) {
+      rows.push({ entryId: entry.id, pageId: null, userId: user.id, readable: entry.testUserPermission(user, "OBSERVER") });
+    }
+    for (const page of [...(entry.pages?.contents ?? entry.pages ?? [])]) {
+      for (const user of nonGmUsers) {
+        rows.push({ entryId: entry.id, pageId: page.id, userId: user.id, readable: page.testUserPermission(user, "OBSERVER") });
+      }
+    }
   }
+  return { rows };
+}
+
+// Operations with no actorId — checked before the actor lookup below, which
+// would otherwise throw "Actor 'undefined' was not found" for every one of
+// them. Journal operations (this stage's audit, and Stage 4's writes) have
+// no actor at all; adding a case here rather than to the actor-keyed switch
+// is what keeps that lookup from being a mandatory gate for every request.
+const ACTORLESS_OPERATIONS = {
+  "prepared-party-summary": () => summarizePreparedParty(globalThis.game?.actors?.contents ?? globalThis.game?.actors ?? []),
+  "audit-journal-visibility": () => auditJournalVisibility(
+    [...(globalThis.game?.journal?.contents ?? globalThis.game?.journal ?? [])],
+    [...(globalThis.game?.users?.contents ?? globalThis.game?.users ?? [])],
+  ),
+};
+
+// Exported so a test can stub globalThis.game and exercise routing
+// directly, rather than only indirectly through the poll/respond loop.
+export async function handleBridgeRequest(request) {
+  const actorless = ACTORLESS_OPERATIONS[request.type];
+  if (actorless) return actorless();
+
   const actor = globalThis.game?.actors?.get(request.actorId);
   if (!actor) throw new Error(`Actor '${request.actorId}' was not found by the active GM client.`);
 

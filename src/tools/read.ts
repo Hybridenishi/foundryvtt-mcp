@@ -295,6 +295,27 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
     },
   );
 
+  server.registerTool(
+    "audit_journal_visibility",
+    {
+      description:
+        "Verify that this server's journal permission filtering agrees exactly with Foundry's own testUserPermission for every journal entry, page, and non-GM user. Requires an active GM bridge. Any disagreement is reported as a failure — this is what keeps search_player_knowledge and get_player_journal_entry trustworthy over time, and should be run after any Foundry or dnd5e version upgrade.",
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      try {
+        const res = await http.post("/api/mcp/journal/visibility-audit");
+        if (res.data?.ok === false) {
+          return errorResult(
+            `Journal visibility audit found ${res.data.disagreements?.length ?? 0} disagreement(s) between the sidecar and Foundry's own permission check.`,
+            res.data,
+          );
+        }
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
   // ── PLAYER-SCOPED JOURNAL ──────────────────────────────────────────
   // Permission-filtered equivalents of the GM journal tools above: results
   // are strictly what the named player has at least Observer permission on

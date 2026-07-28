@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { applyConditionChange, applyHpChange, applySpellSlotAdjustment, executeUtilityActivityUse, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
+import { applyConditionChange, applyHpChange, applySpellSlotAdjustment, auditJournalVisibility, executeUtilityActivityUse, handleBridgeRequest, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -548,4 +548,88 @@ test("applySpellSlotAdjustment multi-slot update works atomically", async () => 
   assert.equal(result.after.length, 2);
   assert.equal(actor.system.spells.spell1.value, 1);
   assert.equal(actor.system.spells.pact.value, 0);
+});
+
+// ── auditJournalVisibility ──────────────────────────────────────────────
+
+function fakeUser(id, name, isGM) {
+  return { id, name, isGM };
+}
+
+function fakePage(id, readableBy) {
+  return { id, testUserPermission: (user) => readableBy.has(user.id) };
+}
+
+function fakeEntry(id, readableBy, pages = []) {
+  return { id, testUserPermission: (user) => readableBy.has(user.id), pages };
+}
+
+test("auditJournalVisibility computes a row per non-GM user for every entry and page, via each document's own testUserPermission", () => {
+  const gm = fakeUser("gm-1", "GM", true);
+  const alice = fakeUser("alice", "Alice", false);
+  const bob = fakeUser("bob", "Bob", false);
+
+  const entry = fakeEntry("e1", new Set(["alice"]), [fakePage("p1", new Set(["alice", "bob"]))]);
+  const { rows } = auditJournalVisibility([entry], [gm, alice, bob]);
+
+  // Two users x (one entry row + one page row) = 4 rows. GM never appears.
+  assert.equal(rows.length, 4);
+  assert.equal(rows.some((r) => r.userId === "gm-1"), false);
+
+  const entryRowAlice = rows.find((r) => r.pageId === null && r.userId === "alice");
+  const entryRowBob = rows.find((r) => r.pageId === null && r.userId === "bob");
+  assert.equal(entryRowAlice.readable, true);
+  assert.equal(entryRowBob.readable, false);
+
+  const pageRowAlice = rows.find((r) => r.pageId === "p1" && r.userId === "alice");
+  const pageRowBob = rows.find((r) => r.pageId === "p1" && r.userId === "bob");
+  assert.equal(pageRowAlice.readable, true);
+  assert.equal(pageRowBob.readable, true);
+});
+
+test("auditJournalVisibility tolerates an entry with no pages and a world with no entries", () => {
+  const alice = fakeUser("alice", "Alice", false);
+  assert.deepEqual(auditJournalVisibility([], [alice]).rows, []);
+  const { rows } = auditJournalVisibility([fakeEntry("e1", new Set())], [alice]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].pageId, null);
+});
+
+// ── handleBridgeRequest — the actor-less dispatch restructure ────────────
+
+test("handleBridgeRequest routes audit-journal-visibility without requiring an actorId", async () => {
+  const alice = fakeUser("alice", "Alice", false);
+  const entry = fakeEntry("e1", new Set(["alice"]));
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: [entry], users: [alice], actors: { get: () => undefined } };
+  try {
+    const result = await handleBridgeRequest({ type: "audit-journal-visibility" });
+    assert.equal(result.rows.length, 1);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest routes prepared-party-summary without requiring an actorId", async () => {
+  const previousGame = globalThis.game;
+  globalThis.game = { actors: { contents: [], get: () => undefined } };
+  try {
+    const result = await handleBridgeRequest({ type: "prepared-party-summary" });
+    assert.deepEqual(result.actors, []);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest still requires a real actor for actor-keyed operations", async () => {
+  const previousGame = globalThis.game;
+  globalThis.game = { actors: { get: () => undefined } };
+  try {
+    await assert.rejects(
+      () => handleBridgeRequest({ type: "prepared-actor-summary", actorId: "missing" }),
+      /was not found/,
+    );
+  } finally {
+    globalThis.game = previousGame;
+  }
 });

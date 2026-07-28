@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const http = require("node:http");
 const { createApp } = require("./app");
+const { canReadEntry, canReadPage, isGm } = require("./journal-visibility");
 
 const API_KEY = "test-api-key";
 
@@ -490,6 +491,80 @@ test("player entry detail returns only readable pages for a mixed-visibility ent
   assert.equal(ravencroft.body.pages.length, 1);
   assert.equal(blank.status, 200);
   assert.deepEqual(blank.body.pages, []);
+});
+
+// ── Journal visibility conformance audit ──────────────────────────────────
+
+// Mirrors app.js's own expectedVisibilityRows() shape, computed
+// independently here (against the fixture directly, not via the route
+// under test) so the "agreeing" case is a real cross-check, not a tautology.
+function independentlyComputedVisibilityRows(world) {
+  const nonGmUsers = world.users.filter((u) => !isGm(u));
+  const rows = [];
+  for (const entry of world.journal) {
+    for (const user of nonGmUsers) {
+      rows.push({ entryId: entry._id, pageId: null, userId: user._id, readable: canReadEntry(entry, user) });
+    }
+    for (const page of entry.pages ?? []) {
+      for (const user of nonGmUsers) {
+        rows.push({ entryId: entry._id, pageId: page._id, userId: user._id, readable: canReadPage(entry, page, user) });
+      }
+    }
+  }
+  return rows;
+}
+
+// Drives the full ready -> park-a-poll -> trigger -> respond -> resolve
+// cycle for one audit call, returning the sidecar's final HTTP response.
+async function runVisibilityAudit(port, bridgeRows) {
+  const clientId = "client-audit-1234";
+  const ready = await request(port, "POST", "/mcp-bridge/ready", { headers: { cookie: "session=abc" }, body: { clientId } });
+  assert.equal(ready.status, 200);
+  const bridgeToken = ready.body.bridgeToken;
+
+  const pollPromise = request(port, "GET", `/mcp-bridge/poll?clientId=${clientId}`, {
+    headers: { "x-mcp-bridge-token": bridgeToken },
+  });
+  const auditPromise = request(port, "POST", "/api/mcp/journal/visibility-audit", { headers: auth() });
+
+  const polled = await pollPromise;
+  assert.equal(polled.status, 200);
+  assert.equal(polled.body.type, "audit-journal-visibility");
+  await request(port, "POST", "/mcp-bridge/respond", {
+    headers: { "x-mcp-bridge-token": bridgeToken },
+    body: { clientId, requestId: polled.body.requestId, result: { rows: bridgeRows } },
+  });
+
+  return auditPromise;
+}
+
+test("visibility audit reports ok when the bridge's matrix agrees with the sidecar's own", async () => {
+  const world = fixtureWorldWithOwnership();
+  const { server, port } = startApp({ world });
+  const res = await runVisibilityAudit(port(), independentlyComputedVisibilityRows(world));
+  server.close();
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.disagreements.length, 0);
+  assert.ok(res.body.checked > 0);
+});
+
+test("visibility audit reports a disagreement when the bridge's answer diverges from the sidecar's own", async () => {
+  const world = fixtureWorldWithOwnership();
+  const { server, port } = startApp({ world });
+  const rows = independentlyComputedVisibilityRows(world);
+  // Seed one deliberate disagreement: flip the answer for journal-1's page,
+  // as seen by Alice, from what the sidecar itself computed.
+  const target = rows.find((r) => r.entryId === "journal-1" && r.pageId === "page-1" && r.userId === "user-alice");
+  const tampered = rows.map((r) => (r === target ? { ...r, readable: !r.readable } : r));
+
+  const res = await runVisibilityAudit(port(), tampered);
+  server.close();
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ok, false);
+  assert.equal(res.body.disagreements.length, 1);
+  assert.equal(res.body.disagreements[0].entryId, "journal-1");
+  assert.equal(res.body.disagreements[0].userId, "user-alice");
 });
 
 test("index feed enumerates only pages visible to at least one non-GM user, with the visible user id set", async () => {

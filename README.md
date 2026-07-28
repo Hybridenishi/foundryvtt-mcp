@@ -50,9 +50,9 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (42 total)
+## Tools (43 total)
 
-### Read and service (26 tools)
+### Read and service (27 tools)
 
 | Tool | Description |
 |---|---|
@@ -77,6 +77,7 @@ mcp_servers:
 | `search_journal` | Search journal entries by name, page content, type, tag, and folder; returns snippets and per-page hits |
 | `get_journal_entry` | Journal entry with all page content, classified type, and per-page content hashes |
 | `list_journal_folders` | Journal folders, for filtering `search_journal` |
+| `audit_journal_visibility` | Verify the sidecar's journal permission filtering agrees exactly with Foundry's own `testUserPermission`; requires an active GM bridge |
 | `list_players` | Non-GM users and the character names they own — stable references for the player-scoped tools below |
 | `search_player_knowledge` | Search the journal strictly as one named player would see it in Foundry; an empty result never implies the subject doesn't exist |
 | `get_player_journal_entry` | One journal entry as one named player would see it; unreadable entries and hidden pages report as not found, identically to a nonexistent id |
@@ -181,6 +182,7 @@ PLAYER_API_KEY=<private-player-scoped-api-key>   # Optional. Reaches only /api/m
 | GET | `/api/mcp/journal` | Search journal (name, page content, type, tag, folder); each result includes a `visibility` block naming which non-GM users can see it |
 | GET | `/api/mcp/journal/:id` | One entry, all pages, with content hashes and per-page `visibility` |
 | GET | `/api/mcp/journal/folders` | Journal folder tree |
+| POST | `/api/mcp/journal/visibility-audit` | Diff the sidecar's permission computation against Foundry's own `testUserPermission`, via the active GM bridge; `ok:false` on any disagreement |
 | GET | `/api/mcp/players` | Non-GM users and the character names they own — accepts `API_KEY` or `PLAYER_API_KEY` |
 | GET | `/api/mcp/players/index-feed` | Every journal page visible to at least one non-GM user, with a content hash and its visible-user-id set; full enumeration, not a delta feed — accepts `API_KEY` or `PLAYER_API_KEY` |
 | GET | `/api/mcp/players/:userRef/journal` | Journal search filtered to exactly what `:userRef` (a user id, user name, or owned character name) can see in Foundry — accepts `API_KEY` or `PLAYER_API_KEY` |
@@ -209,6 +211,10 @@ npm run deploy:foundry
 
 # After hard-refreshing Foundry in an active GM browser session.
 npm run smoke:foundry -- --require-bridge
+
+# Also verify the journal permission model still agrees with Foundry's own
+# testUserPermission — worth running after any Foundry/dnd5e upgrade.
+npm run smoke:foundry -- --audit-journal-visibility
 ```
 
 The smoke script uses the sidecar container's private API key internally, reports Foundry/system versions plus responder count, and does not mutate world data.
