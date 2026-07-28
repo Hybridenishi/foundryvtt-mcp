@@ -50,9 +50,9 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (45 total)
+## Tools (46 total)
 
-### Read and service (27 tools)
+### Read and service (28 tools)
 
 | Tool | Description |
 |---|---|
@@ -81,6 +81,7 @@ mcp_servers:
 | `list_players` | Non-GM users and the character names they own — stable references for the player-scoped tools below |
 | `search_player_knowledge` | Search the journal strictly as one named player would see it in Foundry; an empty result never implies the subject doesn't exist |
 | `get_player_journal_entry` | One journal entry as one named player would see it; unreadable entries and hidden pages report as not found, identically to a nonexistent id |
+| `preview_obsidian_import` | Dry-run report of `scripts/import-obsidian.mjs` over a vault: what would change, what's downgraded to GM-only and why. Read-only — applying an import requires running the script directly |
 | `get_users` | All users with roles and online status |
 | `refresh_world` | Verify sidecar connectivity |
 
@@ -194,6 +195,44 @@ PLAYER_API_KEY=<private-player-scoped-api-key>   # Optional. Reaches only /api/m
 | GET | `/api/mcp/users` | All users |
 
 `/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. A GM browser pairs by presenting its existing Foundry session cookie; the sidecar validates that session and issues an in-memory, per-client token that expires when the bridge goes idle. No shared API key is shipped in the module. The separate sidecar API key must be supplied privately through environment configuration and must never be committed.
+
+## Obsidian import
+
+`scripts/import-obsidian.mjs` migrates an Obsidian vault into Foundry journal entries, driving the same gated `preview`/`write` routes as `preview_journal_write`/`apply_journal_write` — there is no second write mechanism.
+
+**Everything defaults to GM-only.** A note becomes player-visible only if its frontmatter explicitly requests it *and* the command line opts into that profile — the note is downgraded, never upgraded, on any ambiguity:
+
+```yaml
+---
+type: person              # -> knowledge.type
+tags: [noble, ravencroft]  # -> knowledge.tags
+foundry-visibility: party  # gm (default) | party | players
+foundry-visibility-players: Alice, Bob   # required when foundry-visibility: players
+aliases: [Leon, Blackstone] # for wikilink resolution
+---
+```
+
+A GM-only section — either an Obsidian callout whose type or title matches (`> [!warning]- DM Only` is the confirmed convention; configurable via `--secret-marker`) or a heading literally titled to match (e.g. `## DM Notes`) — is automatically split into its own GM-only page. This isn't optional: a single Foundry page can't hold two ownership levels.
+
+```bash
+# Dry run — the default. Nothing is written.
+npm run import:obsidian -- /path/to/vault
+
+# Same, machine-readable (also what preview_obsidian_import uses internally)
+npm run import:obsidian -- /path/to/vault --json
+
+# Actually write. Requires typing the exact count of newly player-visible
+# notes to proceed.
+API_KEY=<private-sidecar-api-key> FOUNDRY_SIDECAR_URL=http://foundry-sidecar-host:30001 \
+  npm run import:obsidian -- /path/to/vault --apply --allow-visibility party,players
+
+# Re-verify a prior import's ownership still matches the manifest
+npm run import:obsidian -- /path/to/vault --verify
+```
+
+Idempotent: a `<vault-parent>/obsidian-import-manifest.json` (never inside this repo) tracks each note's resolved entry/page ids, content hash, and visibility. Unchanged notes are skipped; changed content becomes an `update-page`; a **changed visibility is reported and refused** unless `--allow-visibility-change` is also passed — a visibility change on re-import is exactly the accident that would publish the campaign bible. `--limit N` and `--only <pattern>` scope a first run to a handful of notes before running the whole vault. Wikilinks (`[[Foo]]`, `[[Foo|bar]]`) resolve to `@UUID[...]` enrichers once their target has been imported; unresolved or ambiguous links are left literal and reported, never guessed.
+
+The `preview_obsidian_import` MCP tool runs the same dry run and returns the same report conversationally — it has no `--apply` equivalent and cannot write; applying an import is a human running the script directly.
 
 ## Deploy and verify a Foundry host
 

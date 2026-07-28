@@ -353,6 +353,39 @@ test("a bridge request with no responding client times out with 504", async () =
   assert.match(res.body.error, /timed out/);
 });
 
+test("a bridge request queued with no poll parked yet does not burn its timeout budget while waiting", async () => {
+  // Regression for docs/ROADMAP.md's "allow concurrent bridge operations":
+  // the response-timeout clock must start when a request is actually
+  // dispatched to a poll, not when it was merely queued. Register a client
+  // but never park a poll for it — the request sits queued, untimed — wait
+  // past what would have been its timeout if the old (enqueue-time) clock
+  // had been running, then park a poll and respond promptly. It must still
+  // succeed, because its timeout only starts now.
+  const { server, port } = startApp({ deps: { preparedActorTimeoutMs: 30 } });
+  const clientId = "client-queued-1234";
+
+  const ready = await request(port(), "POST", "/mcp-bridge/ready", { headers: { cookie: "session=abc" }, body: { clientId } });
+  assert.equal(ready.status, 200);
+  const bridgeToken = ready.body.bridgeToken;
+
+  const resultPromise = request(port(), "GET", "/api/mcp/actors/actor-1/prepared", { headers: auth() });
+
+  await new Promise((resolve) => setTimeout(resolve, 60)); // longer than preparedActorTimeoutMs, on purpose
+
+  const pollPromise = request(port(), "GET", `/mcp-bridge/poll?clientId=${clientId}`, { headers: { "x-mcp-bridge-token": bridgeToken } });
+  const polled = await pollPromise;
+  assert.equal(polled.status, 200);
+  await request(port(), "POST", "/mcp-bridge/respond", {
+    headers: { "x-mcp-bridge-token": bridgeToken },
+    body: { clientId, requestId: polled.body.requestId, summary: { hp: { value: 10 } } },
+  });
+
+  const res = await resultPromise;
+  server.close();
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { hp: { value: 10 } });
+});
+
 // ── GM journal visibility block ─────────────────────────────────────────
 
 test("GM journal search names exactly which non-GM users can see each entry and page", async () => {

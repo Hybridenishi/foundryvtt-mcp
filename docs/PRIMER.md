@@ -45,6 +45,11 @@ Two-layer bridge:
 │   ├── module.json
 │   ├── scripts/prepared-actor-bridge.mjs
 │   └── scripts/prepared-actor-bridge.test.mjs
+├── scripts/                # Operator tooling — run locally, not deployed
+│   ├── deploy-foundry.sh   # Deploy the sidecar and bridge module to a host
+│   ├── smoke-foundry.sh    # Post-deploy health/bridge/visibility-audit check
+│   ├── import-obsidian.mjs # Obsidian vault -> Foundry journal migration; see README's "Obsidian import"
+│   └── import-obsidian.test.mjs
 ├── traefik/                # Optional Traefik example for the same-origin bridge route
 │   └── foundry-mcp-bridge.yml
 ├── tests/                  # Natural-language agent-behavior scenarios; see tests/README.md

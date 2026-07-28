@@ -1,9 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { FoundryClient } from "../client.js";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+
+const execFileAsync = promisify(execFile);
+// dist/tools/read.js -> ../../scripts/import-obsidian.mjs
+const IMPORTER_SCRIPT_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "import-obsidian.mjs");
 
 function textResult(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
@@ -373,6 +381,36 @@ export function registerReadTools(server: McpServer, client: FoundryClient): voi
         const res = await http.get(`/api/mcp/players/${encodeURIComponent(player)}/journal/${encodeURIComponent(journalId)}`);
         return textResult(res.data);
       } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  // ── OBSIDIAN IMPORT (dry run only) ─────────────────────────────────
+  server.registerTool(
+    "preview_obsidian_import",
+    {
+      description:
+        "Run a dry-run report of scripts/import-obsidian.mjs over an Obsidian vault: what would be created, updated, or skipped, which notes would be downgraded to GM-only and why, and the resolved visibility breakdown. Read-only — this never writes to Foundry, and this tool provides no way to apply the import; that requires a human to run the script directly with --apply and type the confirmation number themselves. Runs locally against the filesystem, not through the sidecar.",
+      inputSchema: {
+        vaultPath: z.string().min(1).optional().describe("Path to the Obsidian vault. Defaults to the OBSIDIAN_VAULT_PATH environment variable if omitted."),
+        allowVisibility: z.array(z.enum(["party", "players"])).optional().describe("Visibility profiles to report as accepted rather than downgraded, mirroring --allow-visibility. Omit to see what would happen with no profiles allowed."),
+        only: z.string().optional().describe("Restrict to vault-relative paths matching this pattern (supports '*' wildcards), mirroring --only."),
+        limit: z.number().int().min(1).max(1000).optional().describe("Consider at most this many notes, mirroring --limit."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ vaultPath, allowVisibility, only, limit }) => {
+      const resolvedVaultPath = vaultPath ?? process.env.OBSIDIAN_VAULT_PATH;
+      if (!resolvedVaultPath) return errorResult("No vault path given and OBSIDIAN_VAULT_PATH is not set.");
+      const scriptArgs = [IMPORTER_SCRIPT_PATH, resolvedVaultPath, "--json"];
+      if (allowVisibility && allowVisibility.length > 0) scriptArgs.push("--allow-visibility", allowVisibility.join(","));
+      if (only) scriptArgs.push("--only", only);
+      if (limit !== undefined) scriptArgs.push("--limit", String(limit));
+      try {
+        const { stdout } = await execFileAsync(process.execPath, scriptArgs);
+        return textResult(JSON.parse(stdout));
+      } catch (e: any) {
+        return errorResult(e.stderr?.trim() || e.message);
+      }
     },
   );
 

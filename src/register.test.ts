@@ -1,5 +1,5 @@
 // Guards two things the README's tool tables promise: the exact set of
-// registered tools (README's "Tools (45 total)" header and its three
+// registered tools (README's "Tools (46 total)" header and its three
 // sub-tables), and that every write tool refuses to run when writes are
 // disabled rather than silently reaching the sidecar.
 import { test } from "node:test";
@@ -15,7 +15,8 @@ const READ_TOOLS = [
   "get_prepared_party_overview", "list_actor_items", "list_item_activities", "get_item_activity",
   "validate_5e_actor", "search_items", "get_item", "get_scenes", "get_scene_tokens",
   "get_combat_state", "get_chat_log", "search_journal", "get_journal_entry", "list_journal_folders",
-  "audit_journal_visibility", "list_players", "search_player_knowledge", "get_player_journal_entry", "get_users",
+  "audit_journal_visibility", "list_players", "search_player_knowledge", "get_player_journal_entry",
+  "preview_obsidian_import", "get_users",
   "world_summary", "system_info", "refresh_world",
 ];
 const DICE_TOOLS = ["roll_dice"];
@@ -50,11 +51,11 @@ function buildServer(writeEnabled: boolean) {
   return server;
 }
 
-test("registers exactly the documented 45 tools", () => {
+test("registers exactly the documented 46 tools", () => {
   const names = Object.keys(registeredTools(buildServer(true))).sort();
   const expected = ["ping", ...READ_TOOLS, ...DICE_TOOLS, ...PREVIEW_TOOLS, ...WRITE_TOOLS].sort();
   assert.deepEqual(names, expected);
-  assert.equal(names.length, 45);
+  assert.equal(names.length, 46);
 });
 
 test("every write tool refuses to run when FOUNDRY_WRITE_ENABLED is false", async () => {
