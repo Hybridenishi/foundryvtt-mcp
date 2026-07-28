@@ -35,6 +35,8 @@ Two-layer bridge:
 │   ├── confirmations.js     # Per-operation request validators + confirmation-token issue/consume wrappers
 │   ├── confirmation.js      # The generic confirmation primitive: binding/payload storage and symmetric matching
 │   ├── actor-utils.js       # Raw-actor summarization and pagination helpers
+│   ├── journal-search.js    # Journal search, classification, and detail assembly — ownership-agnostic
+│   ├── journal-visibility.js # Foundry ownership resolution and the player-scoped, permission-filtered views built on it
 │   ├── bridge-auth.js       # Constant-time bridge-token comparison
 │   ├── *.test.js             # node --test unit and route tests for the files above
 │   ├── package-lock.json    # Tracked so the Dockerfile's `npm ci` is reproducible on a fresh host
@@ -43,6 +45,11 @@ Two-layer bridge:
 │   ├── module.json
 │   ├── scripts/prepared-actor-bridge.mjs
 │   └── scripts/prepared-actor-bridge.test.mjs
+├── scripts/                # Operator tooling — run locally, not deployed
+│   ├── deploy-foundry.sh   # Deploy the sidecar and bridge module to a host
+│   ├── smoke-foundry.sh    # Post-deploy health/bridge/visibility-audit check
+│   ├── import-obsidian.mjs # Obsidian vault -> Foundry journal migration; see README's "Obsidian import"
+│   └── import-obsidian.test.mjs
 ├── traefik/                # Optional Traefik example for the same-origin bridge route
 │   └── foundry-mcp-bridge.yml
 ├── tests/                  # Natural-language agent-behavior scenarios; see tests/README.md
@@ -88,9 +95,11 @@ Set `FOUNDRY_DEPLOY_TARGET`, `FOUNDRY_COMPOSE_DIR`, `FOUNDRY_SIDECAR_DIR`, and `
 
 Set `FOUNDRY_WRITE_ENABLED=true` in both the MCP client and the sidecar container only when enabling mutations. The sidecar independently rejects every mutation route when that setting is absent or false.
 
+`PLAYER_API_KEY` is a second, optional sidecar credential scoped to `/api/mcp/players/*` only — it cannot reach any GM route or any write route, by construction (a separate Express router with its own auth check, mounted ahead of the GM-only middleware), not by convention. Leave it unset until a player-facing consumer (e.g. the Iris knowledge service described in the campaign-knowledge-journal plan) actually needs it; the routes simply stay reachable by the regular `API_KEY` alone until then.
+
 The `traefik/` directory is an optional example only. Any reverse proxy is suitable if it preserves the Foundry browser session cookie while forwarding the same-origin `/mcp-bridge` route to the sidecar.
 
-After the deploy, hard-refresh Foundry in an active GM browser session, then run `npm run smoke:foundry -- --require-bridge`. This second check requires an authenticated GM bridge responder and reports Foundry/system versions plus responder count.
+After the deploy, hard-refresh Foundry in an active GM browser session, then run `npm run smoke:foundry -- --require-bridge`. This second check requires an authenticated GM bridge responder and reports Foundry/system versions plus responder count. Add `--audit-journal-visibility` (which implies `--require-bridge`) to also run the journal-visibility conformance audit through the bridge and exit `3` on any disagreement between the sidecar's permission computation and Foundry's own — worth running after every Foundry or dnd5e version upgrade, since that is exactly the kind of change that could silently shift ownership resolution.
 
 Reload Foundry in an active GM browser session after copying the module files. The bridge pairs only after the sidecar validates the browser's authenticated Foundry session as a GM, then uses an in-memory per-client token that expires after 45 seconds of inactivity. No bridge credential belongs in the module source. The prepared-data route returns an explicit bridge-unavailable error rather than falling back to raw values when no GM bridge responds.
 

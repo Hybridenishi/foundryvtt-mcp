@@ -1,5 +1,5 @@
 // Guards two things the README's tool tables promise: the exact set of
-// registered tools (README's "Tools (39 total)" header and its three
+// registered tools (README's "Tools (48 total)" header and its three
 // sub-tables), and that every write tool refuses to run when writes are
 // disabled rather than silently reaching the sidecar.
 import { test } from "node:test";
@@ -14,17 +14,21 @@ const READ_TOOLS = [
   "search_actors", "get_actor", "get_5e_actor_summary", "get_prepared_5e_actor_summary",
   "get_prepared_party_overview", "list_actor_items", "list_item_activities", "get_item_activity",
   "validate_5e_actor", "search_items", "get_item", "get_scenes", "get_scene_tokens",
-  "get_combat_state", "get_chat_log", "search_journal", "get_journal_entry", "list_journal_folders", "get_users",
+  "get_combat_state", "get_chat_log", "search_journal", "get_journal_entry", "list_journal_folders",
+  "audit_journal_visibility", "list_players", "search_player_knowledge", "get_player_journal_entry",
+  "preview_obsidian_import", "get_users",
   "world_summary", "system_info", "refresh_world",
 ];
 const DICE_TOOLS = ["roll_dice"];
 const PREVIEW_TOOLS = [
   "preview_hp_change", "preview_temporary_hp", "preview_condition_change",
-  "preview_item_activity_use", "preview_spell_slot_adjustment",
+  "preview_item_activity_use", "preview_spell_slot_adjustment", "preview_journal_write",
+  "preview_link_actor_journal",
 ];
 const WRITE_TOOLS = [
   "apply_hp_change", "set_temporary_hp", "apply_condition_change", "apply_spell_slot_adjustment",
   "execute_item_activity_use", "update_actor", "create_actor", "delete_actor", "next_turn", "create_chat_message",
+  "apply_journal_write", "apply_link_actor_journal",
 ];
 
 // The SDK exposes no public API to list registered tools — `_registeredTools`
@@ -48,11 +52,11 @@ function buildServer(writeEnabled: boolean) {
   return server;
 }
 
-test("registers exactly the documented 39 tools", () => {
+test("registers exactly the documented 48 tools", () => {
   const names = Object.keys(registeredTools(buildServer(true))).sort();
   const expected = ["ping", ...READ_TOOLS, ...DICE_TOOLS, ...PREVIEW_TOOLS, ...WRITE_TOOLS].sort();
   assert.deepEqual(names, expected);
-  assert.equal(names.length, 39);
+  assert.equal(names.length, 48);
 });
 
 test("every write tool refuses to run when FOUNDRY_WRITE_ENABLED is false", async () => {

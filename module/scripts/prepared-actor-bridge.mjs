@@ -493,10 +493,193 @@ export async function executeUtilityActivityUse(actor, request) {
   };
 }
 
-async function handleBridgeRequest(request) {
-  if (request.type === "prepared-party-summary") {
-    return summarizePreparedParty(globalThis.game?.actors?.contents ?? globalThis.game?.actors ?? []);
+// Foundry's own ground truth for journal permission, computed via each
+// document's real testUserPermission() — the same method Foundry itself
+// uses for access control, on the same document instances. This function's
+// only job is to report what Foundry says; the sidecar independently
+// computes its own answer from raw ownership maps
+// (sidecar/journal-visibility.js) and diffs the two. Any disagreement means
+// the sidecar's cache of Foundry's ownership model has drifted.
+export function auditJournalVisibility(journalEntries, users) {
+  const nonGmUsers = [...users].filter((user) => !user.isGM);
+  const rows = [];
+  for (const entry of journalEntries) {
+    for (const user of nonGmUsers) {
+      rows.push({ entryId: entry.id, pageId: null, userId: user.id, readable: entry.testUserPermission(user, "OBSERVER") });
+    }
+    for (const page of [...(entry.pages?.contents ?? entry.pages ?? [])]) {
+      for (const user of nonGmUsers) {
+        rows.push({ entryId: entry.id, pageId: page.id, userId: user.id, readable: page.testUserPermission(user, "OBSERVER") });
+      }
+    }
   }
+  return { rows };
+}
+
+function journalEntryReceipt(entry) {
+  return {
+    entryId: entry.id,
+    entryUuid: entry.uuid,
+    entryName: entry.name,
+    ownership: entry.ownership,
+    pages: [...(entry.pages?.contents ?? entry.pages ?? [])].map((page) => ({
+      pageId: page.id,
+      pageUuid: page.uuid,
+      pageName: page.name,
+      ownership: page.ownership,
+    })),
+  };
+}
+
+function journalPageReceipt(entry, page) {
+  return {
+    entryId: entry.id,
+    entryUuid: entry.uuid,
+    pageId: page.id,
+    pageUuid: page.uuid,
+    pageName: page.name,
+    ownership: page.ownership,
+  };
+}
+
+function journalKnowledgeFlagData(knowledge) {
+  if (!knowledge) return undefined;
+  const data = {};
+  if (typeof knowledge.type === "string") data.type = knowledge.type;
+  if (Array.isArray(knowledge.tags)) data.tags = knowledge.tags;
+  return Object.keys(data).length > 0 ? data : undefined;
+}
+
+function requireResolvedOwnership(request) {
+  const ownership = request?.ownership;
+  if (!ownership || typeof ownership !== "object") {
+    throw new Error("A resolved ownership map is required — this operation is not meant to be called without the sidecar's preview/apply gating.");
+  }
+  return ownership;
+}
+
+// Tier A execution: real JournalEntry.create / createEmbeddedDocuments /
+// JournalEntryPage#update, never modifyDocument. Every page under a
+// party/players-visible entry gets the SAME resolved ownership written
+// explicitly (never left to inherit) — a mixed-visibility entry is built by
+// a second, separately confirmed add-journal-page call carrying its own,
+// different ownership, never by one call carrying two different maps.
+export async function createJournalEntry(request) {
+  const name = request?.name;
+  if (typeof name !== "string" || name.trim().length === 0) throw new Error("A journal entry name is required.");
+  const pages = Array.isArray(request?.pages) ? request.pages : [];
+  if (pages.length === 0) throw new Error("At least one page is required.");
+  const ownership = requireResolvedOwnership(request);
+  if (typeof globalThis.JournalEntry?.create !== "function") throw new Error("The Foundry JournalEntry.create method is unavailable.");
+
+  const knowledge = journalKnowledgeFlagData(request?.knowledge);
+  const created = await globalThis.JournalEntry.create({
+    name,
+    ownership: { ...ownership },
+    folder: typeof request?.folder === "string" ? request.folder : null,
+    pages: pages.map((page) => ({
+      name: page.name,
+      type: "text",
+      text: { content: page.content ?? "", format: 1 },
+      ownership: { ...ownership },
+    })),
+    ...(knowledge ? { flags: { "foundry-mcp-bridge": { knowledge } } } : {}),
+  });
+  if (!created) throw new Error("Foundry did not return the created journal entry.");
+  return journalEntryReceipt(created);
+}
+
+export async function addJournalPage(request) {
+  const entry = globalThis.game?.journal?.get(request?.entryId);
+  if (!entry) throw new Error(`Journal entry '${request?.entryId}' was not found by the active GM client.`);
+  const pages = Array.isArray(request?.pages) ? request.pages : [];
+  if (pages.length !== 1) throw new Error("add-journal-page takes exactly one page.");
+  const ownership = requireResolvedOwnership(request);
+  if (typeof entry.createEmbeddedDocuments !== "function") throw new Error("The Foundry createEmbeddedDocuments method is unavailable.");
+
+  const [created] = await entry.createEmbeddedDocuments("JournalEntryPage", [{
+    name: pages[0].name,
+    type: "text",
+    text: { content: pages[0].content ?? "", format: 1 },
+    ownership: { ...ownership },
+  }]);
+  if (!created) throw new Error("Foundry did not return the created journal page.");
+  return journalPageReceipt(entry, created);
+}
+
+export async function updateJournalPage(request) {
+  const entry = globalThis.game?.journal?.get(request?.entryId);
+  if (!entry) throw new Error(`Journal entry '${request?.entryId}' was not found by the active GM client.`);
+  const page = typeof entry.pages?.get === "function"
+    ? entry.pages.get(request?.pageId)
+    : [...(entry.pages?.contents ?? entry.pages ?? [])].find((candidate) => candidate.id === request?.pageId);
+  if (!page) throw new Error(`Page '${request?.pageId}' was not found on entry '${request?.entryId}'.`);
+  const pages = Array.isArray(request?.pages) ? request.pages : [];
+  if (pages.length !== 1) throw new Error("update-journal-page takes exactly one page.");
+  const ownership = requireResolvedOwnership(request);
+  if (typeof page.update !== "function") throw new Error("The Foundry JournalEntryPage#update method is unavailable.");
+
+  await page.update({
+    name: pages[0].name,
+    "text.content": pages[0].content ?? "",
+    "text.format": 1,
+    ownership: { ...ownership },
+  });
+  return journalPageReceipt(entry, page);
+}
+
+// Operations with no actorId — checked before the actor lookup below, which
+// would otherwise throw "Actor 'undefined' was not found" for every one of
+// them. Journal operations (this stage's audit, and Stage 4's writes) have
+// no actor at all; adding a case here rather than to the actor-keyed switch
+// is what keeps that lookup from being a mandatory gate for every request.
+// Bidirectional flags["foundry-mcp-bridge"] cross-reference between an
+// Actor and a JournalEntry (docs/ROADMAP.md's NPC/journal linking item) —
+// deliberately not the Actor's biography field, which DDB Importer and
+// Plutonium overwrite on re-import. There is no preview-side bridge
+// operation here: flags are ordinary document data already present in the
+// sidecar's getWorld() snapshot, so the sidecar previews this locally
+// (sidecar/app.js) and only reaches the bridge for the actual write, unlike
+// runtime-derived previews (HP, spell slots) that genuinely need the live
+// client.
+export async function linkActorAndJournal(actor, request) {
+  const entry = globalThis.game?.journal?.get(request?.entryId);
+  if (!entry) throw new Error(`Journal entry '${request?.entryId}' was not found by the active GM client.`);
+  if (typeof actor.setFlag !== "function" || typeof entry.setFlag !== "function") {
+    throw new Error("The Foundry setFlag method is unavailable.");
+  }
+  await actor.setFlag(MODULE_ID, "linkedJournalEntryId", entry.id);
+  await entry.setFlag(MODULE_ID, "linkedActorId", actor.id);
+
+  const linkedJournalEntryId = typeof actor.getFlag === "function" ? actor.getFlag(MODULE_ID, "linkedJournalEntryId") : entry.id;
+  const linkedActorId = typeof entry.getFlag === "function" ? entry.getFlag(MODULE_ID, "linkedActorId") : actor.id;
+  if (linkedJournalEntryId !== entry.id || linkedActorId !== actor.id) {
+    throw new Error("Read-back of the actor-journal link does not match what was requested.");
+  }
+  return {
+    actorId: actor.id, actorName: actor.name,
+    entryId: entry.id, entryUuid: entry.uuid, entryName: entry.name,
+    linkedJournalEntryId, linkedActorId,
+  };
+}
+
+const ACTORLESS_OPERATIONS = {
+  "prepared-party-summary": () => summarizePreparedParty(globalThis.game?.actors?.contents ?? globalThis.game?.actors ?? []),
+  "audit-journal-visibility": () => auditJournalVisibility(
+    [...(globalThis.game?.journal?.contents ?? globalThis.game?.journal ?? [])],
+    [...(globalThis.game?.users?.contents ?? globalThis.game?.users ?? [])],
+  ),
+  "create-journal-entry": (request) => createJournalEntry(request),
+  "add-journal-page": (request) => addJournalPage(request),
+  "update-journal-page": (request) => updateJournalPage(request),
+};
+
+// Exported so a test can stub globalThis.game and exercise routing
+// directly, rather than only indirectly through the poll/respond loop.
+export async function handleBridgeRequest(request) {
+  const actorless = ACTORLESS_OPERATIONS[request.type];
+  if (actorless) return actorless(request);
+
   const actor = globalThis.game?.actors?.get(request.actorId);
   if (!actor) throw new Error(`Actor '${request.actorId}' was not found by the active GM client.`);
 
@@ -523,6 +706,8 @@ async function handleBridgeRequest(request) {
       return previewUtilityActivityUse(actor, request);
     case "use-utility-activity":
       return executeUtilityActivityUse(actor, request);
+    case "link-actor-journal":
+      return linkActorAndJournal(actor, request);
     default:
       throw new Error(`Unsupported MCP Bridge request type '${request.type}'.`);
   }

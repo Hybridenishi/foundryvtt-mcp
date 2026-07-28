@@ -20,7 +20,20 @@ const {
   buildFoldersById,
   entryDetail,
   journalFolderTree,
+  contentHash,
 } = require("./journal-search");
+const {
+  isGm,
+  canReadEntry,
+  canReadPage,
+  ownerUserIds,
+  resolvePlayer,
+  resolveVisibilityOwnership,
+  visibleJournalFor,
+  entryVisibility,
+  describeSearchResult,
+  describeEntryDetail,
+} = require("./journal-visibility");
 const {
   parseHpChange,
   issueHpChangeConfirmation,
@@ -36,6 +49,12 @@ const {
   parseSpellSlotAdjustment,
   issueSpellSlotAdjustmentConfirmation,
   consumeSpellSlotAdjustmentConfirmation,
+  parseJournalWrite,
+  issueJournalWriteConfirmation,
+  consumeJournalWriteConfirmation,
+  parseActorJournalLink,
+  issueActorJournalLinkConfirmation,
+  consumeActorJournalLinkConfirmation,
 } = require("./confirmations");
 
 const PREPARED_ACTOR_TIMEOUT = 8_000;
@@ -45,6 +64,68 @@ const BRIDGE_CLIENT_TTL = 45_000;
 function foundryVersionFromHtml(html) {
   const match = typeof html === "string" && html.match(/Version\s+(\d+(?:\.\d+)?(?:\s+Build\s+\d+)?)/i);
   return match?.[1] ?? null;
+}
+
+// Stage 3 conformance audit: independently computes the sidecar's own
+// answer for every entry/page x non-GM-user pair, to be diffed (in the
+// route handler below) against the same matrix computed by the bridge
+// module from Foundry's real testUserPermission(). This is what turns
+// sidecar/journal-visibility.js from an unverified parallel model into a
+// cache of Foundry's model with a drift detector.
+function expectedVisibilityRows(journal, users) {
+  const nonGmUsers = collectionValues(users).filter((u) => !isGm(u));
+  const rows = [];
+  for (const entry of collectionValues(journal)) {
+    for (const user of nonGmUsers) {
+      rows.push({ entryId: entry._id, pageId: null, userId: user._id, readable: canReadEntry(entry, user) });
+    }
+    for (const page of collectionValues(entry.pages)) {
+      for (const user of nonGmUsers) {
+        rows.push({ entryId: entry._id, pageId: page._id, userId: user._id, readable: canReadPage(entry, page, user) });
+      }
+    }
+  }
+  return rows;
+}
+
+// Shared status mapping for the two journal-write routes below: a
+// confirmation/token problem is a 409 (only ever relevant to apply); a
+// validation problem from parseJournalWrite or resolveVisibilityOwnership
+// (including a failed player-name resolution) is a 400; anything else is a
+// genuine server-side failure.
+function journalWriteErrorStatus(message) {
+  if (message.includes("confirmation") || message.includes("token") || message.includes("does not match")) return 409;
+  if (
+    message.includes("must be") || message.includes("required") ||
+    message.includes("Cannot resolve") || message.includes("not recognized") ||
+    message.includes("only valid") || message.includes("takes exactly") ||
+    message.includes("Unknown visibility profile")
+  ) return 400;
+  return 500;
+}
+
+function visibilityRowKey(row) {
+  return `${row.entryId} ${row.pageId ?? ""} ${row.userId}`;
+}
+
+// Any value disagreement is a hard finding. A key present on only one side
+// (missingInBridge/missingInSidecar) is reported separately rather than as
+// a disagreement — it most often means the two getWorld()/game.journal
+// snapshots were taken a moment apart on a world that changed in between,
+// not that either side computed a wrong answer for a document both saw.
+function diffVisibilityRows(expectedRows, bridgeRows) {
+  const expectedByKey = new Map(expectedRows.map((r) => [visibilityRowKey(r), r]));
+  const bridgeByKey = new Map(bridgeRows.map((r) => [visibilityRowKey(r), r]));
+  const disagreements = [];
+  for (const [key, expected] of expectedByKey) {
+    const actual = bridgeByKey.get(key);
+    if (actual && actual.readable !== expected.readable) {
+      disagreements.push({ entryId: expected.entryId, pageId: expected.pageId, userId: expected.userId, sidecar: expected.readable, foundry: actual.readable });
+    }
+  }
+  const missingInBridge = [...expectedByKey.keys()].filter((k) => !bridgeByKey.has(k)).length;
+  const missingInSidecar = [...bridgeByKey.keys()].filter((k) => !expectedByKey.has(k)).length;
+  return { disagreements, missingInBridge, missingInSidecar };
 }
 
 function contentRulesFromWorld(world) {
@@ -58,11 +139,14 @@ function contentRulesFromWorld(world) {
   return [...rules].sort();
 }
 
-// deps: { apiKey, writeEnabled, foundryUrl, isConnected(), getWorld(),
-//         emitModifyDocument(payload), validateBridgeGmSession(req),
+// deps: { apiKey, playerApiKey, writeEnabled, foundryUrl, isConnected(),
+//         getWorld(), emitModifyDocument(payload), validateBridgeGmSession(req),
 //         getMcpUserId() }
+// playerApiKey is optional. When unset, only apiKey can reach the
+// player-scoped routes — there is no separate "not configured" error path,
+// it simply never matches, the same way a wrong key never matches.
 function createApp(deps) {
-  const { apiKey, writeEnabled, foundryUrl, isConnected, getWorld, emitModifyDocument, validateBridgeGmSession, getMcpUserId } = deps;
+  const { apiKey, playerApiKey, writeEnabled, foundryUrl, isConnected, getWorld, emitModifyDocument, validateBridgeGmSession, getMcpUserId } = deps;
   // Overridable only so tests can exercise the timeout path in milliseconds
   // instead of real seconds; production always gets the real default.
   const preparedActorTimeoutMs = deps.preparedActorTimeoutMs ?? PREPARED_ACTOR_TIMEOUT;
@@ -91,6 +175,17 @@ function createApp(deps) {
     client.poll = null;
   }
 
+  // A queued request's response-timeout clock starts only here, at the
+  // moment it is actually handed to a parked poll — not at enqueue time.
+  // With one parked poll serving requests one at a time (docs/ROADMAP.md's
+  // "allow concurrent bridge operations" item), a request queued behind
+  // others previously burned its whole timeout budget just waiting its
+  // turn, and could fail before the bridge ever saw it — exactly the
+  // failure mode a long-running caller with many sequential requests (the
+  // Obsidian importer) would otherwise hit if anything else touched the
+  // bridge while it ran. This does not add concurrent dispatch (this
+  // deployment has exactly one GM bridge client in practice), but it does
+  // mean queue depth no longer costs a request its own response window.
   function dispatchPreparedActorRequests() {
     const client = activePreparedActorClients().find((candidate) => candidate.poll);
     if (!client || queuedPreparedActorRequests.length === 0) return;
@@ -98,6 +193,15 @@ function createApp(deps) {
     const request = queuedPreparedActorRequests.shift();
     const poll = client.poll;
     clearBridgePoll(client);
+
+    const pending = pendingPreparedActorRequests.get(request.requestId);
+    if (pending) {
+      pending.timeout = setTimeout(() => {
+        pendingPreparedActorRequests.delete(request.requestId);
+        pending.reject(new Error("Prepared actor request timed out. Open Foundry as a GM so the bridge module can respond."));
+      }, preparedActorTimeoutMs);
+    }
+
     // Preserve the requested bridge operation and its validated payload. Sending
     // only the actor ID makes the client default every request to a summary.
     poll.res.json(request);
@@ -111,12 +215,8 @@ function createApp(deps) {
 
     return new Promise((resolve, reject) => {
       const requestId = randomUUID();
-      const timeout = setTimeout(() => {
-        pendingPreparedActorRequests.delete(requestId);
-        reject(new Error("Prepared actor request timed out. Open Foundry as a GM so the bridge module can respond."));
-      }, preparedActorTimeoutMs);
-
-      pendingPreparedActorRequests.set(requestId, { resolve, reject, timeout });
+      // No timeout armed yet — see dispatchPreparedActorRequests().
+      pendingPreparedActorRequests.set(requestId, { resolve, reject, timeout: null });
       queuedPreparedActorRequests.push({ requestId, ...operation });
       dispatchPreparedActorRequests();
     });
@@ -208,6 +308,133 @@ function createApp(deps) {
     else return res.status(400).json({ error: "A result or error is required" });
     res.json({ ok: true, requestId });
   });
+
+  // Player-scoped routes, mounted before the GM-only auth middleware below
+  // so they can accept a second, narrower credential. Every route here is
+  // read-only and permission-filtered by sidecar/journal-visibility.js;
+  // none of them can reach GM-only content or any write route — path
+  // segment, not a query parameter, is what makes that a structural
+  // property rather than something a caller can opt out of by omission.
+  const playerRouter = express.Router();
+
+  playerRouter.use((req, res, next) => {
+    const key = req.headers["x-api-key"];
+    const authorized = key === apiKey || (Boolean(playerApiKey) && key === playerApiKey);
+    if (!authorized) return res.status(401).json({ error: "Unauthorized" });
+    if (!isConnected()) return res.status(503).json({ error: "Not connected" });
+    next();
+  });
+
+  function resolveOrRefuse(w, userRef, res) {
+    const { user, reason } = resolvePlayer(w.users, w.actors, userRef);
+    if (!user) {
+      res.status(400).json({ error: `Unknown player '${userRef}' (${reason}). See GET /api/mcp/players for valid references.` });
+      return null;
+    }
+    return user;
+  }
+
+  playerRouter.get("/", async (_req, res) => {
+    try {
+      const w = await getWorld();
+      const actors = collectionValues(w.actors);
+      const players = collectionValues(w.users).filter((u) => !isGm(u)).map((u) => ({
+        userId: u._id,
+        name: u.name,
+        characterNames: actors.filter((a) => a.type === "character" && ownerUserIds(a).includes(u._id)).map((a) => a.name),
+      }));
+      res.json({ schemaVersion: 1, players });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Full enumeration of every entry/page visible to at least one non-GM
+  // user — not a changed-since feed. See docs/ROADMAP.md and the plan doc:
+  // the dangerous mutation is an entry *narrowing* from party-visible to
+  // GM-only, which a content-hash delta would silently miss. A consumer
+  // diffs the returned uuid set against its own index each sweep and drops
+  // anything absent, which handles narrowing and deletion with one
+  // mechanism. GM-only pages are excluded here, server-side, so "the index
+  // holds no GM content" is a property this route enforces.
+  playerRouter.get("/index-feed", async (_req, res) => {
+    try {
+      const w = await getWorld();
+      const nonGmUsers = collectionValues(w.users).filter((u) => !isGm(u));
+      const items = [];
+      for (const entry of collectionValues(w.journal)) {
+        for (const page of collectionValues(entry.pages)) {
+          const visibleTo = nonGmUsers.filter((u) => canReadPage(entry, page, u)).map((u) => u._id);
+          if (visibleTo.length === 0) continue;
+          const content = page.text?.content ?? "";
+          items.push({
+            entryUuid: `JournalEntry.${entry._id}`,
+            pageUuid: `JournalEntry.${entry._id}.JournalEntryPage.${page._id}`,
+            entryName: entry.name,
+            pageName: page.name,
+            content,
+            contentHash: contentHash(content),
+            visibleTo,
+          });
+        }
+      }
+      res.json({ schemaVersion: 1, total: items.length, items });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  playerRouter.get("/:userRef/journal", async (req, res) => {
+    try {
+      const w = await getWorld();
+      const user = resolveOrRefuse(w, req.params.userRef, res);
+      if (!user) return;
+      const foldersById = buildFoldersById(w.folders);
+      const visible = visibleJournalFor(w.journal, user);
+      const { total, returned, results } = searchJournal(visible, foldersById, req.query);
+      res.json({
+        schemaVersion: 1,
+        scope: "player",
+        asPlayer: { userId: user._id, name: user.name },
+        total,
+        returned,
+        results: results.map(({ entryId, entryName, uuid, nameMatched, pageHits }) => ({ entryId, entryName, uuid, nameMatched, pageHits })),
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  playerRouter.get("/:userRef/journal/:entryId", async (req, res) => {
+    try {
+      const w = await getWorld();
+      const user = resolveOrRefuse(w, req.params.userRef, res);
+      if (!user) return;
+      const entry = collectionValues(w.journal).find((j) => j._id === req.params.entryId);
+      if (!entry || !canReadEntry(entry, user)) return res.status(404).json({ error: "Not found" });
+      const allPages = collectionValues(entry.pages);
+      const readablePages = allPages.filter((p) => canReadPage(entry, p, user));
+      // Entry-level access alone does not guarantee any content: a GM may
+      // leave every page explicitly GM-only under an otherwise-visible
+      // entry. That case must read as "not found", identically to a
+      // nonexistent id, not as an empty-but-confirmed-to-exist entry — see
+      // journal-visibility.js's visibleJournalFor for the same rule applied
+      // to search.
+      if (allPages.length > 0 && readablePages.length === 0) return res.status(404).json({ error: "Not found" });
+      const foldersById = buildFoldersById(w.folders);
+      const detail = entryDetail(entry, foldersById);
+      const readablePageIds = new Set(readablePages.map((p) => p._id));
+      res.json({
+        schemaVersion: 1,
+        scope: "player",
+        asPlayer: { userId: user._id, name: user.name },
+        _id: detail._id,
+        name: detail.name,
+        uuid: detail.uuid,
+        pages: detail.pages
+          .filter((p) => readablePageIds.has(p._id))
+          .map(({ _id, uuid, name, type, content, contentHash: hash }) => ({ _id, uuid, name, type, content, contentHash: hash })),
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  playerRouter.use((_req, res) => res.status(404).json({ error: "Not found" }));
+
+  app.use("/api/mcp/players", playerRouter);
 
   app.use((req, res, next) => {
     if (req.headers["x-api-key"] !== apiKey) return res.status(401).json({ error: "Unauthorized" });
@@ -444,6 +671,53 @@ function createApp(deps) {
     }
   });
 
+  // Bidirectional Actor <-> JournalEntry link (docs/ROADMAP.md's NPC/journal
+  // linking item): sets flags["foundry-mcp-bridge"].linkedJournalEntryId on
+  // the actor and .linkedActorId on the entry, deliberately not the
+  // biography field. Low-stakes compared to a visibility change, but every
+  // mutation follows the same preview -> confirm -> apply shape per
+  // AGENTS.md. Preview is a local read from the world snapshot already
+  // fetched by getWorld() — flags are ordinary document data, not prepared
+  // runtime state like HP, so unlike the actor-write previews this one
+  // needs no active GM bridge at all; only apply does, since only apply
+  // actually calls Foundry's setFlag.
+  app.post("/api/mcp/actors/:id/link-journal/preview", async (req, res) => {
+    try {
+      const parsed = parseActorJournalLink(req.body);
+      const w = await getWorld();
+      const actor = w.actors?.find((a) => a._id === req.params.id);
+      if (!actor) return res.status(404).json({ error: `Actor '${req.params.id}' was not found.` });
+      const entry = collectionValues(w.journal).find((j) => j._id === parsed.entryId);
+      if (!entry) return res.status(404).json({ error: `Journal entry '${parsed.entryId}' was not found.` });
+      res.json({
+        actorId: actor._id,
+        actorName: actor.name,
+        entryId: entry._id,
+        entryUuid: `JournalEntry.${entry._id}`,
+        entryName: entry.name,
+        currentLinkedJournalEntryId: actor.flags?.["foundry-mcp-bridge"]?.linkedJournalEntryId ?? null,
+        currentLinkedActorId: entry.flags?.["foundry-mcp-bridge"]?.linkedActorId ?? null,
+        confirmation: issueActorJournalLinkConfirmation(req.params.id, parsed.entryId),
+      });
+    } catch (e) {
+      res.status(e.message.includes("entryId") ? 400 : 500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/mcp/actors/:id/link-journal", requireWriteEnabled, async (req, res) => {
+    try {
+      const parsed = parseActorJournalLink(req.body);
+      consumeActorJournalLinkConfirmation(req.body?.confirmationToken, req.params.id, parsed.entryId);
+      const result = await requestBridgeOperation({ type: "link-actor-journal", actorId: req.params.id, entryId: parsed.entryId });
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      const status = e.message.includes("confirmation") || e.message.includes("token") || e.message.includes("does not match") ? 409
+        : e.message.includes("entryId") ? 400
+        : e.message.includes("was not found") ? 404 : 500;
+      res.status(status).json({ error: e.message });
+    }
+  });
+
   app.get("/api/mcp/actors/:id/items", async (req, res) => {
     try {
       const w = await getWorld();
@@ -545,14 +819,23 @@ function createApp(deps) {
   });
 
   // Journal — GM-scoped. Returns full search results including any
-  // GM-only material; there is no permission filtering at this route.
-  // Player-scoped equivalents (which do filter) are a later stage.
+  // GM-only material, plus a `visibility` block naming exactly which
+  // non-GM users (if any) can see each entry/page; there is no permission
+  // *filtering* at this route. Player-scoped, filtered equivalents are
+  // below, under /api/mcp/players.
   app.get("/api/mcp/journal", async (req, res) => {
     try {
       const w = await getWorld();
       const foldersById = buildFoldersById(w.folders);
-      const { total, returned, results } = searchJournal(collectionValues(w.journal), foldersById, req.query);
-      res.json({ scope: "gm", total, returned, results });
+      const journalEntries = collectionValues(w.journal);
+      const { total, returned, results } = searchJournal(journalEntries, foldersById, req.query);
+      const rawById = new Map(journalEntries.map((e) => [e._id, e]));
+      res.json({
+        scope: "gm",
+        total,
+        returned,
+        results: results.map((r) => describeSearchResult(rawById.get(r.entryId), r, w.users)),
+      });
     }
     catch(e) { res.status(500).json({ error: e.message }); }
   });
@@ -570,8 +853,110 @@ function createApp(deps) {
       const entry = collectionValues(w.journal).find(j => j._id === req.params.id);
       if (!entry) return res.status(404).json({ error: "Not found" });
       const foldersById = buildFoldersById(w.folders);
-      res.json(entryDetail(entry, foldersById));
+      const detail = entryDetail(entry, foldersById);
+      res.json(describeEntryDetail(entry, detail, w.users));
     } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Verifies sidecar/journal-visibility.js's permission resolution against
+  // Foundry's own testUserPermission(), computed inside the active GM
+  // client. Requires the GM bridge; read-only, no write gate. `ok: false`
+  // (a real disagreement) is reported as a 200 with the finding, not as an
+  // HTTP error — this is a diagnostic result, not an operational failure,
+  // and the caller (the MCP tool, or the smoke script) is what decides
+  // whether that's fatal.
+  app.post("/api/mcp/journal/visibility-audit", async (_req, res) => {
+    try {
+      const w = await getWorld();
+      const expectedRows = expectedVisibilityRows(w.journal, w.users);
+      const bridgeResult = await requestBridgeOperation({ type: "audit-journal-visibility" });
+      const { disagreements, missingInBridge, missingInSidecar } = diffVisibilityRows(expectedRows, bridgeResult?.rows ?? []);
+      res.json({
+        ok: disagreements.length === 0,
+        checked: expectedRows.length,
+        disagreements,
+        missingInBridge,
+        missingInSidecar,
+      });
+    } catch (e) {
+      res.status(e.message.includes("timed out") ? 504 : 500).json({ error: e.message });
+    }
+  });
+
+  // Journal writes — preview/apply, following the mandatory pattern
+  // (AGENTS.md's "Write pattern"): a read-only preview resolves visibility
+  // to a concrete Foundry ownership map and issues a scoped, single-use
+  // confirmation token; apply requires that exact token and
+  // FOUNDRY_WRITE_ENABLED, then executes through the GM bridge via real
+  // JournalEntry/JournalEntryPage APIs, never raw modifyDocument. One
+  // visibility per call: a mixed-visibility entry is built by composition —
+  // create the entry at one visibility, then a second, separately
+  // confirmed add-journal-page call for a page at a different visibility.
+  app.post("/api/mcp/journal/write/preview", async (req, res) => {
+    try {
+      const parsed = parseJournalWrite(req.body);
+      const w = await getWorld();
+
+      let entry = null;
+      if (parsed.operation !== "create-entry") {
+        entry = collectionValues(w.journal).find((j) => j._id === parsed.entryId);
+        if (!entry) return res.status(404).json({ error: `Journal entry '${parsed.entryId}' was not found.` });
+      }
+      if (parsed.operation === "update-page") {
+        const page = collectionValues(entry.pages).find((p) => p._id === parsed.pageId);
+        if (!page) return res.status(404).json({ error: `Page '${parsed.pageId}' was not found on entry '${parsed.entryId}'.` });
+      }
+
+      const { ownership: resolvedOwnership } = resolveVisibilityOwnership(parsed.visibility, w.users, w.actors);
+      const visibility = entryVisibility({ ownership: resolvedOwnership }, w.users);
+      const confirmation = issueJournalWriteConfirmation(parsed, resolvedOwnership, visibility.visibleTo);
+
+      res.json({
+        operation: parsed.operation,
+        entryId: parsed.entryId,
+        pageId: parsed.pageId,
+        name: parsed.name,
+        pages: parsed.pages.map((p) => ({ name: p.name })),
+        visibility: { profile: parsed.visibility.profile, ...visibility },
+        confirmation,
+      });
+    } catch (e) {
+      res.status(journalWriteErrorStatus(e.message)).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/mcp/journal/write", requireWriteEnabled, async (req, res) => {
+    try {
+      const parsed = parseJournalWrite(req.body);
+      const w = await getWorld();
+      const { ownership: recomputedOwnership } = resolveVisibilityOwnership(parsed.visibility, w.users, w.actors);
+      // Recomputed only to reproduce the binding for comparison below — the
+      // write itself uses the payload's frozen, preview-time map, not this.
+      const payload = consumeJournalWriteConfirmation(req.body?.confirmationToken, parsed, recomputedOwnership);
+
+      const bridgeType = parsed.operation === "create-entry" ? "create-journal-entry"
+        : parsed.operation === "add-page" ? "add-journal-page"
+        : "update-journal-page";
+      const result = await requestBridgeOperation({
+        type: bridgeType,
+        entryId: parsed.entryId,
+        pageId: parsed.pageId,
+        name: parsed.name,
+        folder: parsed.folder,
+        knowledge: parsed.knowledge,
+        pages: parsed.pages,
+        ownership: payload.resolvedOwnership,
+      });
+
+      res.json({
+        ok: true,
+        operation: parsed.operation,
+        visibility: { profile: parsed.visibility.profile, visibleTo: payload.resolvedNames },
+        ...result,
+      });
+    } catch (e) {
+      res.status(journalWriteErrorStatus(e.message)).json({ error: e.message });
+    }
   });
 
   // Users

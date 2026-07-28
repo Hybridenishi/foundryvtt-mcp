@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { applyConditionChange, applyHpChange, applySpellSlotAdjustment, executeUtilityActivityUse, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
+import { addJournalPage, applyConditionChange, applyHpChange, applySpellSlotAdjustment, auditJournalVisibility, createJournalEntry, executeUtilityActivityUse, handleBridgeRequest, linkActorAndJournal, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty, updateJournalPage } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -548,4 +548,345 @@ test("applySpellSlotAdjustment multi-slot update works atomically", async () => 
   assert.equal(result.after.length, 2);
   assert.equal(actor.system.spells.spell1.value, 1);
   assert.equal(actor.system.spells.pact.value, 0);
+});
+
+// ── auditJournalVisibility ──────────────────────────────────────────────
+
+function fakeUser(id, name, isGM) {
+  return { id, name, isGM };
+}
+
+function fakePage(id, readableBy) {
+  return { id, testUserPermission: (user) => readableBy.has(user.id) };
+}
+
+function fakeEntry(id, readableBy, pages = []) {
+  return { id, testUserPermission: (user) => readableBy.has(user.id), pages };
+}
+
+test("auditJournalVisibility computes a row per non-GM user for every entry and page, via each document's own testUserPermission", () => {
+  const gm = fakeUser("gm-1", "GM", true);
+  const alice = fakeUser("alice", "Alice", false);
+  const bob = fakeUser("bob", "Bob", false);
+
+  const entry = fakeEntry("e1", new Set(["alice"]), [fakePage("p1", new Set(["alice", "bob"]))]);
+  const { rows } = auditJournalVisibility([entry], [gm, alice, bob]);
+
+  // Two users x (one entry row + one page row) = 4 rows. GM never appears.
+  assert.equal(rows.length, 4);
+  assert.equal(rows.some((r) => r.userId === "gm-1"), false);
+
+  const entryRowAlice = rows.find((r) => r.pageId === null && r.userId === "alice");
+  const entryRowBob = rows.find((r) => r.pageId === null && r.userId === "bob");
+  assert.equal(entryRowAlice.readable, true);
+  assert.equal(entryRowBob.readable, false);
+
+  const pageRowAlice = rows.find((r) => r.pageId === "p1" && r.userId === "alice");
+  const pageRowBob = rows.find((r) => r.pageId === "p1" && r.userId === "bob");
+  assert.equal(pageRowAlice.readable, true);
+  assert.equal(pageRowBob.readable, true);
+});
+
+test("auditJournalVisibility tolerates an entry with no pages and a world with no entries", () => {
+  const alice = fakeUser("alice", "Alice", false);
+  assert.deepEqual(auditJournalVisibility([], [alice]).rows, []);
+  const { rows } = auditJournalVisibility([fakeEntry("e1", new Set())], [alice]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].pageId, null);
+});
+
+// ── handleBridgeRequest — the actor-less dispatch restructure ────────────
+
+test("handleBridgeRequest routes audit-journal-visibility without requiring an actorId", async () => {
+  const alice = fakeUser("alice", "Alice", false);
+  const entry = fakeEntry("e1", new Set(["alice"]));
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: [entry], users: [alice], actors: { get: () => undefined } };
+  try {
+    const result = await handleBridgeRequest({ type: "audit-journal-visibility" });
+    assert.equal(result.rows.length, 1);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest routes prepared-party-summary without requiring an actorId", async () => {
+  const previousGame = globalThis.game;
+  globalThis.game = { actors: { contents: [], get: () => undefined } };
+  try {
+    const result = await handleBridgeRequest({ type: "prepared-party-summary" });
+    assert.deepEqual(result.actors, []);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest still requires a real actor for actor-keyed operations", async () => {
+  const previousGame = globalThis.game;
+  globalThis.game = { actors: { get: () => undefined } };
+  try {
+    await assert.rejects(
+      () => handleBridgeRequest({ type: "prepared-actor-summary", actorId: "missing" }),
+      /was not found/,
+    );
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+// ── Journal writes — createJournalEntry / addJournalPage / updateJournalPage
+
+function fakeJournalPage(overrides = {}) {
+  const page = {
+    id: overrides.id ?? "page-1",
+    uuid: `JournalEntry.${overrides.entryId ?? "entry-1"}.JournalEntryPage.${overrides.id ?? "page-1"}`,
+    name: overrides.name ?? "Page",
+    ownership: overrides.ownership ?? { default: 0 },
+    async update(data) {
+      if (data.name !== undefined) page.name = data.name;
+      if (data.ownership !== undefined) page.ownership = data.ownership;
+    },
+  };
+  return page;
+}
+
+function fakeJournalEntry(overrides = {}) {
+  const pages = overrides.pages ?? [];
+  const entry = {
+    id: overrides.id ?? "entry-1",
+    uuid: `JournalEntry.${overrides.id ?? "entry-1"}`,
+    name: overrides.name ?? "Entry",
+    ownership: overrides.ownership ?? { default: 0 },
+    pages: {
+      contents: pages,
+      get: (id) => pages.find((p) => p.id === id),
+    },
+    async createEmbeddedDocuments(docType, data) {
+      const created = data.map((d, i) => fakeJournalPage({ entryId: entry.id, id: `new-page-${pages.length + i}`, name: d.name, ownership: d.ownership }));
+      pages.push(...created);
+      return created;
+    },
+  };
+  return entry;
+}
+
+test("createJournalEntry writes explicit ownership on the entry and on every page — never left to inherit", async () => {
+  const previousJournalEntry = globalThis.JournalEntry;
+  let capturedData;
+  globalThis.JournalEntry = {
+    create: async (data) => {
+      capturedData = data;
+      return fakeJournalEntry({
+        id: "new-entry",
+        name: data.name,
+        ownership: data.ownership,
+        pages: data.pages.map((p, i) => fakeJournalPage({ id: `p${i}`, name: p.name, ownership: p.ownership })),
+      });
+    },
+  };
+  try {
+    const receipt = await createJournalEntry({
+      name: "Leon Blackstone",
+      pages: [{ name: "Overview", content: "<p>Hi</p>" }],
+      ownership: { default: 0, alice: 2 },
+    });
+    assert.equal(capturedData.ownership.default, 0);
+    assert.equal(capturedData.pages[0].ownership.alice, 2);
+    assert.equal(capturedData.pages[0].text.content, "<p>Hi</p>");
+    assert.equal(receipt.entryId, "new-entry");
+    assert.equal(receipt.pages[0].ownership.alice, 2);
+  } finally {
+    globalThis.JournalEntry = previousJournalEntry;
+  }
+});
+
+test("createJournalEntry stores the knowledge flag under the module's own namespace when provided", async () => {
+  const previousJournalEntry = globalThis.JournalEntry;
+  let capturedData;
+  globalThis.JournalEntry = {
+    create: async (data) => {
+      capturedData = data;
+      return fakeJournalEntry({ id: "e1", name: data.name, ownership: data.ownership, pages: [] });
+    },
+  };
+  try {
+    await createJournalEntry({
+      name: "X",
+      pages: [{ name: "P", content: "c" }],
+      ownership: { default: 0 },
+      knowledge: { type: "person", tags: ["npc"] },
+    });
+    assert.deepEqual(capturedData.flags["foundry-mcp-bridge"].knowledge, { type: "person", tags: ["npc"] });
+  } finally {
+    globalThis.JournalEntry = previousJournalEntry;
+  }
+});
+
+test("createJournalEntry requires a name, at least one page, and a resolved ownership map", async () => {
+  await assert.rejects(() => createJournalEntry({ pages: [{ name: "P", content: "c" }], ownership: {} }), /name is required/);
+  await assert.rejects(() => createJournalEntry({ name: "X", pages: [], ownership: {} }), /At least one page/);
+  await assert.rejects(() => createJournalEntry({ name: "X", pages: [{ name: "P", content: "c" }] }), /resolved ownership map is required/);
+});
+
+test("addJournalPage creates one page under an existing entry with the given ownership and reads it back", async () => {
+  const entry = fakeJournalEntry({ id: "entry-1", pages: [] });
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: (id) => (id === "entry-1" ? entry : undefined) } };
+  try {
+    const receipt = await addJournalPage({ entryId: "entry-1", pages: [{ name: "Secret", content: "<p>shh</p>" }], ownership: { default: 0 } });
+    assert.equal(receipt.entryId, "entry-1");
+    assert.equal(receipt.pageName, "Secret");
+    assert.equal(entry.pages.contents.length, 1);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("addJournalPage throws if the entry does not exist", async () => {
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: () => undefined } };
+  try {
+    await assert.rejects(
+      () => addJournalPage({ entryId: "missing", pages: [{ name: "P", content: "c" }], ownership: { default: 0 } }),
+      /was not found/,
+    );
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("updateJournalPage updates name, content, and ownership on an existing page, and reads it back", async () => {
+  const page = fakeJournalPage({ id: "page-1", name: "Old", ownership: { default: 0 } });
+  const entry = fakeJournalEntry({ id: "entry-1", pages: [page] });
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: (id) => (id === "entry-1" ? entry : undefined) } };
+  try {
+    const receipt = await updateJournalPage({
+      entryId: "entry-1",
+      pageId: "page-1",
+      pages: [{ name: "New", content: "<p>updated</p>" }],
+      ownership: { default: 0, alice: 2 },
+    });
+    assert.equal(receipt.pageName, "New");
+    assert.equal(page.name, "New");
+    assert.equal(page.ownership.alice, 2);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("updateJournalPage throws if the page does not exist on the entry", async () => {
+  const entry = fakeJournalEntry({ id: "entry-1", pages: [] });
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: () => entry } };
+  try {
+    await assert.rejects(
+      () => updateJournalPage({ entryId: "entry-1", pageId: "missing", pages: [{ name: "P", content: "c" }], ownership: { default: 0 } }),
+      /was not found/,
+    );
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+// ── Actor <-> journal linking ────────────────────────────────────────────
+
+function fakeActorWithFlags(overrides = {}) {
+  const flags = {};
+  return {
+    id: overrides.id ?? "actor-1",
+    name: overrides.name ?? "Actor",
+    async setFlag(scope, key, value) { (flags[scope] ??= {})[key] = value; },
+    getFlag(scope, key) { return flags[scope]?.[key]; },
+  };
+}
+
+function fakeJournalEntryWithFlags(overrides = {}) {
+  const flags = {};
+  return {
+    id: overrides.id ?? "entry-1",
+    uuid: `JournalEntry.${overrides.id ?? "entry-1"}`,
+    name: overrides.name ?? "Entry",
+    async setFlag(scope, key, value) { (flags[scope] ??= {})[key] = value; },
+    getFlag(scope, key) { return flags[scope]?.[key]; },
+  };
+}
+
+// Preview is intentionally not a bridge operation — see the comment on
+// linkActorAndJournal above — so there is no previewActorJournalLink here
+// to test; the sidecar previews this locally from its world snapshot
+// (sidecar/app.test.js covers that).
+
+test("linkActorAndJournal sets flags on both the actor and the entry, bidirectionally, and reads them back", async () => {
+  const actor = fakeActorWithFlags({ id: "actor-1" });
+  const entry = fakeJournalEntryWithFlags({ id: "entry-1" });
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: (id) => (id === "entry-1" ? entry : undefined) } };
+  try {
+    const receipt = await linkActorAndJournal(actor, { entryId: "entry-1" });
+    assert.equal(receipt.linkedJournalEntryId, "entry-1");
+    assert.equal(receipt.linkedActorId, "actor-1");
+    assert.equal(actor.getFlag("foundry-mcp-bridge", "linkedJournalEntryId"), "entry-1");
+    assert.equal(entry.getFlag("foundry-mcp-bridge", "linkedActorId"), "actor-1");
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("linkActorAndJournal throws if the journal entry does not exist", async () => {
+  const actor = fakeActorWithFlags();
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: () => undefined } };
+  try {
+    await assert.rejects(() => linkActorAndJournal(actor, { entryId: "missing" }), /was not found/);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest routes link-actor-journal through the actor-keyed path, requiring a real actor", async () => {
+  const previousGame = globalThis.game;
+  globalThis.game = { actors: { get: () => undefined } };
+  try {
+    await assert.rejects(
+      () => handleBridgeRequest({ type: "link-actor-journal", actorId: "missing", entryId: "entry-1" }),
+      /Actor 'missing' was not found/,
+    );
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest routes link-actor-journal end to end once the actor resolves", async () => {
+  const actor = fakeActorWithFlags({ id: "actor-1" });
+  const entry = fakeJournalEntryWithFlags({ id: "entry-1" });
+  const previousGame = globalThis.game;
+  globalThis.game = { actors: { get: (id) => (id === "actor-1" ? actor : undefined) }, journal: { get: (id) => (id === "entry-1" ? entry : undefined) } };
+  try {
+    const receipt = await handleBridgeRequest({ type: "link-actor-journal", actorId: "actor-1", entryId: "entry-1" });
+    assert.equal(receipt.linkedActorId, "actor-1");
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest routes create-journal-entry without requiring an actorId", async () => {
+  const previousGame = globalThis.game;
+  const previousJournalEntry = globalThis.JournalEntry;
+  globalThis.game = { actors: { get: () => undefined } };
+  globalThis.JournalEntry = {
+    create: async (data) => fakeJournalEntry({ id: "e1", name: data.name, ownership: data.ownership, pages: [] }),
+  };
+  try {
+    const receipt = await handleBridgeRequest({
+      type: "create-journal-entry",
+      name: "X",
+      pages: [{ name: "P", content: "c" }],
+      ownership: { default: 0 },
+    });
+    assert.equal(receipt.entryId, "e1");
+  } finally {
+    globalThis.game = previousGame;
+    globalThis.JournalEntry = previousJournalEntry;
+  }
 });

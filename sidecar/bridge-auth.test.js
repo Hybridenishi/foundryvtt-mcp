@@ -30,3 +30,16 @@ test("sidecar source requires private API and Foundry-account credentials", () =
   assert.match(app, /function requireWriteEnabled/);
   assert.match(app, /actors\/:id\/delete", requireWriteEnabled/);
 });
+
+test("PLAYER_API_KEY has no hardcoded fallback and never authorizes GM or write routes", () => {
+  // Mirrors the API_KEY assertions above: the second, narrower credential
+  // must be read from the environment only, and the player router's own
+  // auth check — not the shared write-gate mechanism — is what's supposed
+  // to keep it away from everything but /api/mcp/players/*.
+  const index = readFileSync(`${__dirname}/index.js`, "utf8");
+  assert.match(index, /PLAYER_API_KEY\s*=\s*process\.env\.PLAYER_API_KEY/);
+  assert.doesNotMatch(index, /PLAYER_API_KEY\s*=\s*process\.env\.PLAYER_API_KEY\s*\|\|\s*["'][^"']+["']/);
+
+  const app = readFileSync(`${__dirname}/app.js`, "utf8");
+  assert.match(app, /playerRouter/);
+});

@@ -14,6 +14,24 @@ function disabledResult() {
   return errorResult("Write tools are disabled. Set FOUNDRY_WRITE_ENABLED=true to enable them.");
 }
 
+const journalVisibilitySchema = z.discriminatedUnion("profile", [
+  z.object({ profile: z.literal("gm") }),
+  z.object({ profile: z.literal("party") }),
+  z.object({ profile: z.literal("players"), players: z.array(z.string().min(1)).min(1).max(20) }),
+]).describe(
+  "Required — there is no default. Who may read everything in this call: 'gm' is GM-only; 'party' is every non-GM user who currently owns a character actor; 'players' names them explicitly, each by Foundry user id, user name, or the name of a character they own. Everything in one call gets exactly one visibility; build a mixed-visibility entry with a second, separately confirmed call rather than mixing visibilities in one.",
+);
+
+const journalPageSchema = z.object({
+  name: z.string().min(1),
+  content: z.string().describe("HTML. @UUID[...] enrichers are preserved."),
+});
+
+const journalKnowledgeSchema = z.object({
+  type: z.enum(["location", "person", "faction", "history", "item", "session", "other"]).optional(),
+  tags: z.array(z.string()).max(20).optional(),
+}).optional();
+
 export function registerWriteTools(server: McpServer, client: FoundryClient, writeEnabled: boolean): void {
   const http = client.httpClient;
 
@@ -311,6 +329,91 @@ export function registerWriteTools(server: McpServer, client: FoundryClient, wri
       if (!writeEnabled) return disabledResult();
       try {
         const res = await http.post("/api/mcp/chat", { content, ...(type !== undefined ? { type } : {}) });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "preview_link_actor_journal",
+    {
+      description:
+        "Preview linking an actor to a journal entry, deliberately not the actor's biography field (DDB Importer and Plutonium overwrite that on re-import). Read-only, and needs no active GM bridge (it reads current link flags from the world snapshot, not from Foundry live): returns both documents' current link flags and a short-lived confirmation token for apply_link_actor_journal, which does require the bridge to actually write them.",
+      inputSchema: { actorId: z.string().min(1), entryId: z.string().min(1) },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ actorId, entryId }) => {
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/link-journal/preview`, { entryId });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "apply_link_actor_journal",
+    {
+      description:
+        "Apply an exactly previewed actor-journal link through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact short-lived token from preview_link_actor_journal. Sets flags[\"foundry-mcp-bridge\"].linkedJournalEntryId on the actor and .linkedActorId on the journal entry, bidirectionally, and reads both back as the receipt.",
+      inputSchema: { actorId: z.string().min(1), entryId: z.string().min(1), confirmationToken: z.string().uuid() },
+      annotations: { destructiveHint: false },
+    },
+    async ({ actorId, entryId, confirmationToken }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post(`/api/mcp/actors/${actorId}/link-journal`, { entryId, confirmationToken });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "preview_journal_write",
+    {
+      description:
+        "Preview creating a campaign journal entry, or adding/updating one page on an existing entry, with an explicit visibility. Read-only: returns the exact resolved audience by player name plus a short-lived confirmation token for apply_journal_write. Visibility is required and there is no default. Everything in one call gets exactly one visibility — build a mixed-visibility entry (e.g. a public overview plus a GM-only secret page) with a second, separately previewed and confirmed call, never by mixing visibilities in one.",
+      inputSchema: {
+        operation: z.enum(["create-entry", "add-page", "update-page"]),
+        entryId: z.string().min(1).optional().describe("Required for add-page and update-page"),
+        pageId: z.string().min(1).optional().describe("Required for update-page"),
+        name: z.string().min(1).optional().describe("Entry name; required for create-entry"),
+        folder: z.string().optional().describe("Journal folder name or id, for create-entry"),
+        knowledge: journalKnowledgeSchema,
+        pages: z.array(journalPageSchema).min(1).max(20).describe("Exactly one page for add-page and update-page"),
+        visibility: journalVisibilitySchema,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ operation, entryId, pageId, name, folder, knowledge, pages, visibility }) => {
+      try {
+        const res = await http.post("/api/mcp/journal/write/preview", { operation, entryId, pageId, name, folder, knowledge, pages, visibility });
+        return textResult(res.data);
+      } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
+    },
+  );
+
+  server.registerTool(
+    "apply_journal_write",
+    {
+      description:
+        "Apply an exactly previewed journal write through the active GM bridge. Requires FOUNDRY_WRITE_ENABLED=true and the exact short-lived token from preview_journal_write. The receipt names every player who can see the result, read back from the written document — report that receipt to the user verbatim; an unverified visibility claim on a spoiler-sensitive write is worthless. Rejected if anything about the request (including the resolved audience) differs from what was previewed.",
+      inputSchema: {
+        operation: z.enum(["create-entry", "add-page", "update-page"]),
+        entryId: z.string().min(1).optional(),
+        pageId: z.string().min(1).optional(),
+        name: z.string().min(1).optional(),
+        folder: z.string().optional(),
+        knowledge: journalKnowledgeSchema,
+        pages: z.array(journalPageSchema).min(1).max(20),
+        visibility: journalVisibilitySchema,
+        confirmationToken: z.string().uuid(),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ operation, entryId, pageId, name, folder, knowledge, pages, visibility, confirmationToken }) => {
+      if (!writeEnabled) return disabledResult();
+      try {
+        const res = await http.post("/api/mcp/journal/write", { operation, entryId, pageId, name, folder, knowledge, pages, visibility, confirmationToken });
         return textResult(res.data);
       } catch (e: any) { return errorResult(e.response?.data?.error ?? e.message); }
     },
