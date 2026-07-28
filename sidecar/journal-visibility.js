@@ -190,6 +190,57 @@ function describeEntryDetail(rawEntry, detail, users) {
   };
 }
 
+// "party" is derived, never stored: every non-GM user who owns at least one
+// character Actor, restricted to non-GM ids even if a character's
+// ownership map somehow names one (ownerUserIds itself does not know about
+// roles). Because it is derived, a receipt naming the resolved set is not
+// optional — the DM has no other way to know who "party" actually meant at
+// the moment of writing.
+function resolvePartyUserIds(actors, users) {
+  const nonGmIds = new Set(collectionValues(users).filter((u) => !isGm(u)).map((u) => u._id));
+  const ids = new Set();
+  for (const actor of collectionValues(actors)) {
+    if (actor?.type !== "character") continue;
+    for (const id of ownerUserIds(actor)) {
+      if (nonGmIds.has(id)) ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
+// Resolves a visibility profile (docs/ROADMAP.md Phase 5) to a Foundry
+// ownership map. `default` is never anything but NONE — not even for
+// `party` — because a permissive default would silently grant access to
+// any user created later (a new player, a re-imported account); every
+// member is enumerated explicitly instead, which costs nothing and closes
+// that. Throws on an unresolvable `players` reference rather than guessing
+// — the same fail-loud discipline as resolvePlayer, which this delegates
+// to for each name.
+function resolveVisibilityOwnership(visibility, users, actors) {
+  if (visibility.profile === "gm") {
+    return { ownership: { default: OWNERSHIP.NONE }, resolvedUserIds: [] };
+  }
+
+  let resolvedUserIds;
+  if (visibility.profile === "party") {
+    resolvedUserIds = resolvePartyUserIds(actors, users);
+  } else if (visibility.profile === "players") {
+    const ids = new Set();
+    for (const ref of visibility.players ?? []) {
+      const { user, reason } = resolvePlayer(users, actors, ref);
+      if (!user) throw new Error(`Cannot resolve player '${ref}': ${reason}.`);
+      ids.add(user._id);
+    }
+    resolvedUserIds = [...ids];
+  } else {
+    throw new Error(`Unknown visibility profile '${visibility.profile}'.`);
+  }
+
+  const ownership = { default: OWNERSHIP.NONE };
+  for (const id of resolvedUserIds) ownership[id] = OWNERSHIP.OBSERVER;
+  return { ownership, resolvedUserIds };
+}
+
 module.exports = {
   OWNERSHIP,
   GM_ROLE,
@@ -200,6 +251,8 @@ module.exports = {
   canReadPage,
   ownerUserIds,
   resolvePlayer,
+  resolvePartyUserIds,
+  resolveVisibilityOwnership,
   visibleJournalFor,
   entryVisibility,
   pageVisibility,

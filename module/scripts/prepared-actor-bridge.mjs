@@ -516,6 +516,118 @@ export function auditJournalVisibility(journalEntries, users) {
   return { rows };
 }
 
+function journalEntryReceipt(entry) {
+  return {
+    entryId: entry.id,
+    entryUuid: entry.uuid,
+    entryName: entry.name,
+    ownership: entry.ownership,
+    pages: [...(entry.pages?.contents ?? entry.pages ?? [])].map((page) => ({
+      pageId: page.id,
+      pageUuid: page.uuid,
+      pageName: page.name,
+      ownership: page.ownership,
+    })),
+  };
+}
+
+function journalPageReceipt(entry, page) {
+  return {
+    entryId: entry.id,
+    entryUuid: entry.uuid,
+    pageId: page.id,
+    pageUuid: page.uuid,
+    pageName: page.name,
+    ownership: page.ownership,
+  };
+}
+
+function journalKnowledgeFlagData(knowledge) {
+  if (!knowledge) return undefined;
+  const data = {};
+  if (typeof knowledge.type === "string") data.type = knowledge.type;
+  if (Array.isArray(knowledge.tags)) data.tags = knowledge.tags;
+  return Object.keys(data).length > 0 ? data : undefined;
+}
+
+function requireResolvedOwnership(request) {
+  const ownership = request?.ownership;
+  if (!ownership || typeof ownership !== "object") {
+    throw new Error("A resolved ownership map is required — this operation is not meant to be called without the sidecar's preview/apply gating.");
+  }
+  return ownership;
+}
+
+// Tier A execution: real JournalEntry.create / createEmbeddedDocuments /
+// JournalEntryPage#update, never modifyDocument. Every page under a
+// party/players-visible entry gets the SAME resolved ownership written
+// explicitly (never left to inherit) — a mixed-visibility entry is built by
+// a second, separately confirmed add-journal-page call carrying its own,
+// different ownership, never by one call carrying two different maps.
+export async function createJournalEntry(request) {
+  const name = request?.name;
+  if (typeof name !== "string" || name.trim().length === 0) throw new Error("A journal entry name is required.");
+  const pages = Array.isArray(request?.pages) ? request.pages : [];
+  if (pages.length === 0) throw new Error("At least one page is required.");
+  const ownership = requireResolvedOwnership(request);
+  if (typeof globalThis.JournalEntry?.create !== "function") throw new Error("The Foundry JournalEntry.create method is unavailable.");
+
+  const knowledge = journalKnowledgeFlagData(request?.knowledge);
+  const created = await globalThis.JournalEntry.create({
+    name,
+    ownership: { ...ownership },
+    folder: typeof request?.folder === "string" ? request.folder : null,
+    pages: pages.map((page) => ({
+      name: page.name,
+      type: "text",
+      text: { content: page.content ?? "", format: 1 },
+      ownership: { ...ownership },
+    })),
+    ...(knowledge ? { flags: { "foundry-mcp-bridge": { knowledge } } } : {}),
+  });
+  if (!created) throw new Error("Foundry did not return the created journal entry.");
+  return journalEntryReceipt(created);
+}
+
+export async function addJournalPage(request) {
+  const entry = globalThis.game?.journal?.get(request?.entryId);
+  if (!entry) throw new Error(`Journal entry '${request?.entryId}' was not found by the active GM client.`);
+  const pages = Array.isArray(request?.pages) ? request.pages : [];
+  if (pages.length !== 1) throw new Error("add-journal-page takes exactly one page.");
+  const ownership = requireResolvedOwnership(request);
+  if (typeof entry.createEmbeddedDocuments !== "function") throw new Error("The Foundry createEmbeddedDocuments method is unavailable.");
+
+  const [created] = await entry.createEmbeddedDocuments("JournalEntryPage", [{
+    name: pages[0].name,
+    type: "text",
+    text: { content: pages[0].content ?? "", format: 1 },
+    ownership: { ...ownership },
+  }]);
+  if (!created) throw new Error("Foundry did not return the created journal page.");
+  return journalPageReceipt(entry, created);
+}
+
+export async function updateJournalPage(request) {
+  const entry = globalThis.game?.journal?.get(request?.entryId);
+  if (!entry) throw new Error(`Journal entry '${request?.entryId}' was not found by the active GM client.`);
+  const page = typeof entry.pages?.get === "function"
+    ? entry.pages.get(request?.pageId)
+    : [...(entry.pages?.contents ?? entry.pages ?? [])].find((candidate) => candidate.id === request?.pageId);
+  if (!page) throw new Error(`Page '${request?.pageId}' was not found on entry '${request?.entryId}'.`);
+  const pages = Array.isArray(request?.pages) ? request.pages : [];
+  if (pages.length !== 1) throw new Error("update-journal-page takes exactly one page.");
+  const ownership = requireResolvedOwnership(request);
+  if (typeof page.update !== "function") throw new Error("The Foundry JournalEntryPage#update method is unavailable.");
+
+  await page.update({
+    name: pages[0].name,
+    "text.content": pages[0].content ?? "",
+    "text.format": 1,
+    ownership: { ...ownership },
+  });
+  return journalPageReceipt(entry, page);
+}
+
 // Operations with no actorId — checked before the actor lookup below, which
 // would otherwise throw "Actor 'undefined' was not found" for every one of
 // them. Journal operations (this stage's audit, and Stage 4's writes) have
@@ -527,13 +639,16 @@ const ACTORLESS_OPERATIONS = {
     [...(globalThis.game?.journal?.contents ?? globalThis.game?.journal ?? [])],
     [...(globalThis.game?.users?.contents ?? globalThis.game?.users ?? [])],
   ),
+  "create-journal-entry": (request) => createJournalEntry(request),
+  "add-journal-page": (request) => addJournalPage(request),
+  "update-journal-page": (request) => updateJournalPage(request),
 };
 
 // Exported so a test can stub globalThis.game and exercise routing
 // directly, rather than only indirectly through the poll/respond loop.
 export async function handleBridgeRequest(request) {
   const actorless = ACTORLESS_OPERATIONS[request.type];
-  if (actorless) return actorless();
+  if (actorless) return actorless(request);
 
   const actor = globalThis.game?.actors?.get(request.actorId);
   if (!actor) throw new Error(`Actor '${request.actorId}' was not found by the active GM client.`);

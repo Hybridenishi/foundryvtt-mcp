@@ -50,7 +50,7 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (43 total)
+## Tools (45 total)
 
 ### Read and service (27 tools)
 
@@ -90,7 +90,7 @@ mcp_servers:
 |---|---|
 | `roll_dice` | Any formula: `1d20+5`, `4d6kh3`, `d%`, `adv`, `dis` |
 
-### Previews (5 read-only tools)
+### Previews (6 read-only tools)
 
 | Tool | Description |
 |---|---|
@@ -99,8 +99,9 @@ mcp_servers:
 | `preview_condition_change` | Preview adding or removing one standard condition through the GM bridge; exhaustion is intentionally excluded |
 | `preview_spell_slot_adjustment` | Preview exact spell-slot values through the GM bridge; returns a short-lived confirmation token. Administrative counter adjustment — does not cast spells. Supports pact magic, character actors only |
 | `preview_item_activity_use` | Read-only eligibility check for one exact, unambiguous embedded dnd5e utility activity with no external target; returns a short-lived confirmation token |
+| `preview_journal_write` | Preview creating a journal entry, or adding/updating one page, with a required, explicit visibility (`gm`/`party`/`players:[...]`); returns the resolved audience by name and a short-lived confirmation token |
 
-### Write (10 tools, gated by `FOUNDRY_WRITE_ENABLED`)
+### Write (11 tools, gated by `FOUNDRY_WRITE_ENABLED`)
 
 | Tool | Description |
 |---|---|
@@ -109,6 +110,7 @@ mcp_servers:
 | `apply_hp_change` | Apply an exactly matching, previewed direct HP damage/healing change through dnd5e's `Actor.applyDamage` |
 | `apply_spell_slot_adjustment` | Apply an exactly matching, previewed spell-slot adjustment through the GM bridge. Stale-state protected — rejects if slots changed since preview |
 | `apply_condition_change` | Apply an exactly previewed standard-condition change through the GM bridge |
+| `apply_journal_write` | Apply an exactly previewed journal write through the GM bridge; the receipt names every player who can see the result, read back from the written document |
 | `update_actor` | Patch actor system attributes (`system.hp.value`, `system.currency.gp`, etc.) |
 | `create_actor` | Create a minimal actor; use Plutonium for complete 5e characters and creatures |
 | `delete_actor` | Delete an actor by ID |
@@ -183,6 +185,8 @@ PLAYER_API_KEY=<private-player-scoped-api-key>   # Optional. Reaches only /api/m
 | GET | `/api/mcp/journal/:id` | One entry, all pages, with content hashes and per-page `visibility` |
 | GET | `/api/mcp/journal/folders` | Journal folder tree |
 | POST | `/api/mcp/journal/visibility-audit` | Diff the sidecar's permission computation against Foundry's own `testUserPermission`, via the active GM bridge; `ok:false` on any disagreement |
+| POST | `/api/mcp/journal/write/preview` | Read-only journal write preview; resolves `visibility` to a Foundry ownership map and returns the audience by name plus a one-time confirmation token |
+| POST | `/api/mcp/journal/write` | Apply an exactly matching, previewed journal write (create entry / add page / update page) through the active GM client; requires `FOUNDRY_WRITE_ENABLED=true` |
 | GET | `/api/mcp/players` | Non-GM users and the character names they own — accepts `API_KEY` or `PLAYER_API_KEY` |
 | GET | `/api/mcp/players/index-feed` | Every journal page visible to at least one non-GM user, with a content hash and its visible-user-id set; full enumeration, not a delta feed — accepts `API_KEY` or `PLAYER_API_KEY` |
 | GET | `/api/mcp/players/:userRef/journal` | Journal search filtered to exactly what `:userRef` (a user id, user name, or owned character name) can see in Foundry — accepts `API_KEY` or `PLAYER_API_KEY` |

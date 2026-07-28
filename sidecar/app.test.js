@@ -200,6 +200,7 @@ test("every mutating route is disabled when writes are off", async () => {
     ["POST", "/api/mcp/actors/actor-1/delete"],
     ["POST", "/api/mcp/combats/next-turn"],
     ["POST", "/api/mcp/chat"],
+    ["POST", "/api/mcp/journal/write"],
   ];
   for (const [method, path] of routes) {
     const res = await request(port(), method, path, { headers: auth(), body: {} });
@@ -565,6 +566,156 @@ test("visibility audit reports a disagreement when the bridge's answer diverges 
   assert.equal(res.body.disagreements.length, 1);
   assert.equal(res.body.disagreements[0].entryId, "journal-1");
   assert.equal(res.body.disagreements[0].userId, "user-alice");
+});
+
+// ── Journal writes ────────────────────────────────────────────────────────
+
+// Drives the ready -> park-a-poll -> trigger -> respond -> resolve cycle for
+// one apply call, letting the caller build the simulated bridge receipt
+// from whatever the sidecar actually dispatched (so the ownership map the
+// test asserts on is the one the route really resolved, not a guess).
+async function runJournalWrite(port, applyBody, buildBridgeResult) {
+  const clientId = "client-journal-write-1234";
+  const ready = await request(port, "POST", "/mcp-bridge/ready", { headers: { cookie: "session=abc" }, body: { clientId } });
+  assert.equal(ready.status, 200);
+  const bridgeToken = ready.body.bridgeToken;
+
+  const pollPromise = request(port, "GET", `/mcp-bridge/poll?clientId=${clientId}`, { headers: { "x-mcp-bridge-token": bridgeToken } });
+  const applyPromise = request(port, "POST", "/api/mcp/journal/write", { headers: auth(), body: applyBody });
+
+  const polled = await pollPromise;
+  assert.equal(polled.status, 200);
+  await request(port, "POST", "/mcp-bridge/respond", {
+    headers: { "x-mcp-bridge-token": bridgeToken },
+    body: { clientId, requestId: polled.body.requestId, result: buildBridgeResult(polled.body) },
+  });
+  return applyPromise;
+}
+
+test("journal write: preview resolves visibility and issues a token; apply executes through the bridge and names the resolved audience", async () => {
+  const world = fixtureWorldWithOwnership();
+  const { server, port } = startApp({ world, deps: { writeEnabled: true } });
+
+  const body = {
+    operation: "create-entry",
+    name: "New Secret Location",
+    pages: [{ name: "Overview", content: "<p>Hidden place.</p>" }],
+    visibility: { profile: "players", players: ["Alice"] },
+  };
+  const preview = await request(port(), "POST", "/api/mcp/journal/write/preview", { headers: auth(), body });
+  assert.equal(preview.status, 200);
+  assert.deepEqual(preview.body.visibility.visibleTo.map((u) => u.name), ["Alice"]);
+  const token = preview.body.confirmation.confirmationToken;
+
+  const apply = await runJournalWrite(
+    port(),
+    { ...body, confirmationToken: token },
+    (dispatched) => ({
+      entryId: "new-entry-1",
+      entryUuid: "JournalEntry.new-entry-1",
+      entryName: dispatched.name,
+      ownership: dispatched.ownership,
+      pages: [{ pageId: "new-page-1", pageUuid: "JournalEntry.new-entry-1.JournalEntryPage.new-page-1", pageName: "Overview", ownership: dispatched.ownership }],
+    }),
+  );
+  server.close();
+
+  assert.equal(apply.status, 200);
+  assert.equal(apply.body.ok, true);
+  assert.equal(apply.body.entryId, "new-entry-1");
+  assert.deepEqual(apply.body.visibility.visibleTo.map((u) => u.name), ["Alice"]);
+});
+
+test("journal write apply rejects when the resolved audience changed since preview", async () => {
+  const world = fixtureWorldWithOwnership();
+  const { server, port } = startApp({ world, deps: { writeEnabled: true } });
+
+  const body = {
+    operation: "create-entry",
+    name: "Party Notice",
+    pages: [{ name: "Overview", content: "<p>For the party.</p>" }],
+    visibility: { profile: "party" },
+  };
+  const preview = await request(port(), "POST", "/api/mcp/journal/write/preview", { headers: auth(), body });
+  assert.equal(preview.status, 200);
+  const token = preview.body.confirmation.confirmationToken;
+
+  // Party membership changes between preview and apply — a new player
+  // joins with a character actor, on the same world object the running app
+  // already references.
+  world.actors.push({ _id: "actor-carol", name: "Carol's Hero", type: "character", ownership: { default: 0, "user-carol": 3 } });
+  world.users.push({ _id: "user-carol", name: "Carol", role: 1, active: true });
+
+  const apply = await request(port(), "POST", "/api/mcp/journal/write", { headers: auth(), body: { ...body, confirmationToken: token } });
+  server.close();
+  assert.equal(apply.status, 409);
+  assert.match(apply.body.error, /does not match/);
+});
+
+test("journal write: mixed visibility is built by two separately confirmed calls, never one", async () => {
+  const world = fixtureWorldWithOwnership();
+  const { server, port } = startApp({ world, deps: { writeEnabled: true } });
+
+  // Call 1 — create the entry at "party" visibility. In this fixture only
+  // Alice owns a character actor (Bob's visibility elsewhere comes from an
+  // explicit per-entry grant, not from owning a character), so "party"
+  // resolves to Alice alone here — a real, useful case to cover: "party"
+  // tracks actual character ownership, not "everyone who isn't the GM".
+  const entryBody = { operation: "create-entry", name: "Mixed Entry", pages: [{ name: "Public", content: "<p>public</p>" }], visibility: { profile: "party" } };
+  const previewEntry = await request(port(), "POST", "/api/mcp/journal/write/preview", { headers: auth(), body: entryBody });
+  assert.equal(previewEntry.status, 200);
+  const entryApply = await runJournalWrite(
+    port(),
+    { ...entryBody, confirmationToken: previewEntry.body.confirmation.confirmationToken },
+    (dispatched) => ({
+      entryId: "mixed-1", entryUuid: "JournalEntry.mixed-1", entryName: dispatched.name, ownership: dispatched.ownership,
+      pages: [{ pageId: "pub-1", pageUuid: "JournalEntry.mixed-1.JournalEntryPage.pub-1", pageName: "Public", ownership: dispatched.ownership }],
+    }),
+  );
+  assert.equal(entryApply.status, 200);
+  assert.deepEqual(entryApply.body.visibility.visibleTo.map((u) => u.name), ["Alice"]);
+
+  // Call 2 — a SEPARATE preview and confirmation, adding a GM-only page to
+  // an existing entry with a DIFFERENT visibility than call 1. The schema
+  // has no way to carry two visibilities in one request; this is what
+  // "built by composition" means concretely.
+  const pageBody = { operation: "add-page", entryId: "journal-1", pages: [{ name: "DM Notes", content: "<p>secret</p>" }], visibility: { profile: "gm" } };
+  const previewPage = await request(port(), "POST", "/api/mcp/journal/write/preview", { headers: auth(), body: pageBody });
+  assert.equal(previewPage.status, 200);
+  assert.equal(previewPage.body.visibility.gmOnly, true);
+  const pageApply = await runJournalWrite(
+    port(),
+    { ...pageBody, confirmationToken: previewPage.body.confirmation.confirmationToken },
+    (dispatched) => ({
+      entryId: "journal-1", entryUuid: "JournalEntry.journal-1",
+      pageId: "dm-1", pageUuid: "JournalEntry.journal-1.JournalEntryPage.dm-1", pageName: "DM Notes", ownership: dispatched.ownership,
+    }),
+  );
+  server.close();
+
+  assert.equal(pageApply.status, 200);
+  assert.deepEqual(pageApply.body.visibility.visibleTo, []);
+});
+
+test("journal write preview 404s on an unknown entryId, before ever resolving visibility", async () => {
+  const { server, port } = startApp({ world: fixtureWorldWithOwnership() });
+  const res = await request(port(), "POST", "/api/mcp/journal/write/preview", {
+    headers: auth(),
+    body: { operation: "add-page", entryId: "does-not-exist", pages: [{ name: "P", content: "c" }], visibility: { profile: "gm" } },
+  });
+  server.close();
+  assert.equal(res.status, 404);
+});
+
+test("journal write preview rejects an unresolvable players reference with a 400 naming the problem", async () => {
+  const { server, port } = startApp({ world: fixtureWorldWithOwnership() });
+  const res = await request(port(), "POST", "/api/mcp/journal/write/preview", {
+    headers: auth(),
+    body: { operation: "create-entry", name: "X", pages: [{ name: "P", content: "c" }], visibility: { profile: "players", players: ["Nobody"] } },
+  });
+  server.close();
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /Cannot resolve player/);
 });
 
 test("index feed enumerates only pages visible to at least one non-GM user, with the visible user id set", async () => {

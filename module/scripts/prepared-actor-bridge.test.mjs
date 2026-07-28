@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { applyConditionChange, applyHpChange, applySpellSlotAdjustment, auditJournalVisibility, executeUtilityActivityUse, handleBridgeRequest, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty } from "./prepared-actor-bridge.mjs";
+import { addJournalPage, applyConditionChange, applyHpChange, applySpellSlotAdjustment, auditJournalVisibility, createJournalEntry, executeUtilityActivityUse, handleBridgeRequest, previewConditionChange, previewHpChange, previewSpellSlotAdjustment, previewTemporaryHp, previewUtilityActivityUse, setTemporaryHp, summarizePreparedActor, summarizePreparedParty, updateJournalPage } from "./prepared-actor-bridge.mjs";
 
 test("bridge source contains no browser-served shared API key", async () => {
   const source = await readFile(new URL("./prepared-actor-bridge.mjs", import.meta.url), "utf8");
@@ -631,5 +631,181 @@ test("handleBridgeRequest still requires a real actor for actor-keyed operations
     );
   } finally {
     globalThis.game = previousGame;
+  }
+});
+
+// ── Journal writes — createJournalEntry / addJournalPage / updateJournalPage
+
+function fakeJournalPage(overrides = {}) {
+  const page = {
+    id: overrides.id ?? "page-1",
+    uuid: `JournalEntry.${overrides.entryId ?? "entry-1"}.JournalEntryPage.${overrides.id ?? "page-1"}`,
+    name: overrides.name ?? "Page",
+    ownership: overrides.ownership ?? { default: 0 },
+    async update(data) {
+      if (data.name !== undefined) page.name = data.name;
+      if (data.ownership !== undefined) page.ownership = data.ownership;
+    },
+  };
+  return page;
+}
+
+function fakeJournalEntry(overrides = {}) {
+  const pages = overrides.pages ?? [];
+  const entry = {
+    id: overrides.id ?? "entry-1",
+    uuid: `JournalEntry.${overrides.id ?? "entry-1"}`,
+    name: overrides.name ?? "Entry",
+    ownership: overrides.ownership ?? { default: 0 },
+    pages: {
+      contents: pages,
+      get: (id) => pages.find((p) => p.id === id),
+    },
+    async createEmbeddedDocuments(docType, data) {
+      const created = data.map((d, i) => fakeJournalPage({ entryId: entry.id, id: `new-page-${pages.length + i}`, name: d.name, ownership: d.ownership }));
+      pages.push(...created);
+      return created;
+    },
+  };
+  return entry;
+}
+
+test("createJournalEntry writes explicit ownership on the entry and on every page — never left to inherit", async () => {
+  const previousJournalEntry = globalThis.JournalEntry;
+  let capturedData;
+  globalThis.JournalEntry = {
+    create: async (data) => {
+      capturedData = data;
+      return fakeJournalEntry({
+        id: "new-entry",
+        name: data.name,
+        ownership: data.ownership,
+        pages: data.pages.map((p, i) => fakeJournalPage({ id: `p${i}`, name: p.name, ownership: p.ownership })),
+      });
+    },
+  };
+  try {
+    const receipt = await createJournalEntry({
+      name: "Leon Blackstone",
+      pages: [{ name: "Overview", content: "<p>Hi</p>" }],
+      ownership: { default: 0, alice: 2 },
+    });
+    assert.equal(capturedData.ownership.default, 0);
+    assert.equal(capturedData.pages[0].ownership.alice, 2);
+    assert.equal(capturedData.pages[0].text.content, "<p>Hi</p>");
+    assert.equal(receipt.entryId, "new-entry");
+    assert.equal(receipt.pages[0].ownership.alice, 2);
+  } finally {
+    globalThis.JournalEntry = previousJournalEntry;
+  }
+});
+
+test("createJournalEntry stores the knowledge flag under the module's own namespace when provided", async () => {
+  const previousJournalEntry = globalThis.JournalEntry;
+  let capturedData;
+  globalThis.JournalEntry = {
+    create: async (data) => {
+      capturedData = data;
+      return fakeJournalEntry({ id: "e1", name: data.name, ownership: data.ownership, pages: [] });
+    },
+  };
+  try {
+    await createJournalEntry({
+      name: "X",
+      pages: [{ name: "P", content: "c" }],
+      ownership: { default: 0 },
+      knowledge: { type: "person", tags: ["npc"] },
+    });
+    assert.deepEqual(capturedData.flags["foundry-mcp-bridge"].knowledge, { type: "person", tags: ["npc"] });
+  } finally {
+    globalThis.JournalEntry = previousJournalEntry;
+  }
+});
+
+test("createJournalEntry requires a name, at least one page, and a resolved ownership map", async () => {
+  await assert.rejects(() => createJournalEntry({ pages: [{ name: "P", content: "c" }], ownership: {} }), /name is required/);
+  await assert.rejects(() => createJournalEntry({ name: "X", pages: [], ownership: {} }), /At least one page/);
+  await assert.rejects(() => createJournalEntry({ name: "X", pages: [{ name: "P", content: "c" }] }), /resolved ownership map is required/);
+});
+
+test("addJournalPage creates one page under an existing entry with the given ownership and reads it back", async () => {
+  const entry = fakeJournalEntry({ id: "entry-1", pages: [] });
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: (id) => (id === "entry-1" ? entry : undefined) } };
+  try {
+    const receipt = await addJournalPage({ entryId: "entry-1", pages: [{ name: "Secret", content: "<p>shh</p>" }], ownership: { default: 0 } });
+    assert.equal(receipt.entryId, "entry-1");
+    assert.equal(receipt.pageName, "Secret");
+    assert.equal(entry.pages.contents.length, 1);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("addJournalPage throws if the entry does not exist", async () => {
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: () => undefined } };
+  try {
+    await assert.rejects(
+      () => addJournalPage({ entryId: "missing", pages: [{ name: "P", content: "c" }], ownership: { default: 0 } }),
+      /was not found/,
+    );
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("updateJournalPage updates name, content, and ownership on an existing page, and reads it back", async () => {
+  const page = fakeJournalPage({ id: "page-1", name: "Old", ownership: { default: 0 } });
+  const entry = fakeJournalEntry({ id: "entry-1", pages: [page] });
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: (id) => (id === "entry-1" ? entry : undefined) } };
+  try {
+    const receipt = await updateJournalPage({
+      entryId: "entry-1",
+      pageId: "page-1",
+      pages: [{ name: "New", content: "<p>updated</p>" }],
+      ownership: { default: 0, alice: 2 },
+    });
+    assert.equal(receipt.pageName, "New");
+    assert.equal(page.name, "New");
+    assert.equal(page.ownership.alice, 2);
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("updateJournalPage throws if the page does not exist on the entry", async () => {
+  const entry = fakeJournalEntry({ id: "entry-1", pages: [] });
+  const previousGame = globalThis.game;
+  globalThis.game = { journal: { get: () => entry } };
+  try {
+    await assert.rejects(
+      () => updateJournalPage({ entryId: "entry-1", pageId: "missing", pages: [{ name: "P", content: "c" }], ownership: { default: 0 } }),
+      /was not found/,
+    );
+  } finally {
+    globalThis.game = previousGame;
+  }
+});
+
+test("handleBridgeRequest routes create-journal-entry without requiring an actorId", async () => {
+  const previousGame = globalThis.game;
+  const previousJournalEntry = globalThis.JournalEntry;
+  globalThis.game = { actors: { get: () => undefined } };
+  globalThis.JournalEntry = {
+    create: async (data) => fakeJournalEntry({ id: "e1", name: data.name, ownership: data.ownership, pages: [] }),
+  };
+  try {
+    const receipt = await handleBridgeRequest({
+      type: "create-journal-entry",
+      name: "X",
+      pages: [{ name: "P", content: "c" }],
+      ownership: { default: 0 },
+    });
+    assert.equal(receipt.entryId, "e1");
+  } finally {
+    globalThis.game = previousGame;
+    globalThis.JournalEntry = previousJournalEntry;
   }
 });

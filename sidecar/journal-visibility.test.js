@@ -10,6 +10,8 @@ const {
   canReadPage,
   ownerUserIds,
   resolvePlayer,
+  resolvePartyUserIds,
+  resolveVisibilityOwnership,
   visibleJournalFor,
   entryVisibility,
   pageVisibility,
@@ -252,4 +254,68 @@ test("describeEntryDetail attaches visibility to the entry and to every page", (
 
 test("describeEntryDetail passes through null unchanged", () => {
   assert.equal(describeEntryDetail(undefined, null, [GM]), null);
+});
+
+// ── resolvePartyUserIds ────────────────────────────────────────────────
+
+test("resolvePartyUserIds returns every non-GM user who owns a character actor, derived not stored", () => {
+  const actors = [
+    { _id: "a1", type: "character", ownership: { default: 0, alice: 3 } },
+    { _id: "a2", type: "character", ownership: { default: 0, bob: 3 } },
+    { _id: "a3", type: "npc", ownership: { default: 0, alice: 3 } }, // not a character — excluded
+  ];
+  assert.deepEqual(resolvePartyUserIds(actors, [GM, ALICE, BOB]).sort(), ["alice", "bob"]);
+});
+
+test("resolvePartyUserIds excludes a GM even if somehow marked Owner on a character actor", () => {
+  const actors = [{ _id: "a1", type: "character", ownership: { default: 0, "gm-1": 3 } }];
+  assert.deepEqual(resolvePartyUserIds(actors, [GM, ALICE]), []);
+});
+
+test("resolvePartyUserIds deduplicates a user who owns more than one character", () => {
+  const actors = [
+    { _id: "a1", type: "character", ownership: { default: 0, alice: 3 } },
+    { _id: "a2", type: "character", ownership: { default: 0, alice: 3 } },
+  ];
+  assert.deepEqual(resolvePartyUserIds(actors, [ALICE]), ["alice"]);
+});
+
+// ── resolveVisibilityOwnership ───────────────────────────────────────────
+
+test("'gm' resolves to default:NONE only, no user keys at all", () => {
+  const { ownership, resolvedUserIds } = resolveVisibilityOwnership({ profile: "gm" }, [GM, ALICE], []);
+  assert.deepEqual(ownership, { default: OWNERSHIP.NONE });
+  assert.equal(Object.keys(ownership).length, 1);
+  assert.deepEqual(resolvedUserIds, []);
+});
+
+test("'party' resolves to explicit OBSERVER per resolved user, default never OBSERVER", () => {
+  const actors = [{ _id: "a1", type: "character", ownership: { default: 0, alice: 3 } }];
+  const { ownership, resolvedUserIds } = resolveVisibilityOwnership({ profile: "party" }, [GM, ALICE, BOB], actors);
+  assert.equal(ownership.default, OWNERSHIP.NONE);
+  assert.equal(ownership.alice, OWNERSHIP.OBSERVER);
+  assert.equal(ownership.bob, undefined);
+  assert.deepEqual(resolvedUserIds, ["alice"]);
+});
+
+test("'players' resolves each named reference and never leaves default permissive", () => {
+  const { ownership, resolvedUserIds } = resolveVisibilityOwnership({ profile: "players", players: ["Alice", "bob"] }, [GM, ALICE, BOB], []);
+  assert.equal(ownership.default, OWNERSHIP.NONE);
+  assert.deepEqual([ownership.alice, ownership.bob], [OWNERSHIP.OBSERVER, OWNERSHIP.OBSERVER]);
+  assert.deepEqual(resolvedUserIds.sort(), ["alice", "bob"]);
+});
+
+test("'players' throws, naming the ambiguity, rather than guessing — fail loud", () => {
+  const actors = [{ _id: "actor-decoy", name: "Alice", type: "character", ownership: { default: 0, bob: 3 } }];
+  assert.throws(
+    () => resolveVisibilityOwnership({ profile: "players", players: ["Alice"] }, [GM, ALICE, BOB], actors),
+    /Cannot resolve player 'Alice'.*ambiguous/,
+  );
+});
+
+test("'players' throws on an unmatched reference", () => {
+  assert.throws(
+    () => resolveVisibilityOwnership({ profile: "players", players: ["nobody"] }, [GM, ALICE], []),
+    /Cannot resolve player 'nobody'/,
+  );
 });

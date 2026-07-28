@@ -1,5 +1,5 @@
 // Guards two things the README's tool tables promise: the exact set of
-// registered tools (README's "Tools (43 total)" header and its three
+// registered tools (README's "Tools (45 total)" header and its three
 // sub-tables), and that every write tool refuses to run when writes are
 // disabled rather than silently reaching the sidecar.
 import { test } from "node:test";
@@ -21,11 +21,12 @@ const READ_TOOLS = [
 const DICE_TOOLS = ["roll_dice"];
 const PREVIEW_TOOLS = [
   "preview_hp_change", "preview_temporary_hp", "preview_condition_change",
-  "preview_item_activity_use", "preview_spell_slot_adjustment",
+  "preview_item_activity_use", "preview_spell_slot_adjustment", "preview_journal_write",
 ];
 const WRITE_TOOLS = [
   "apply_hp_change", "set_temporary_hp", "apply_condition_change", "apply_spell_slot_adjustment",
   "execute_item_activity_use", "update_actor", "create_actor", "delete_actor", "next_turn", "create_chat_message",
+  "apply_journal_write",
 ];
 
 // The SDK exposes no public API to list registered tools — `_registeredTools`
@@ -49,11 +50,11 @@ function buildServer(writeEnabled: boolean) {
   return server;
 }
 
-test("registers exactly the documented 43 tools", () => {
+test("registers exactly the documented 45 tools", () => {
   const names = Object.keys(registeredTools(buildServer(true))).sort();
   const expected = ["ping", ...READ_TOOLS, ...DICE_TOOLS, ...PREVIEW_TOOLS, ...WRITE_TOOLS].sort();
   assert.deepEqual(names, expected);
-  assert.equal(names.length, 43);
+  assert.equal(names.length, 45);
 });
 
 test("every write tool refuses to run when FOUNDRY_WRITE_ENABLED is false", async () => {
