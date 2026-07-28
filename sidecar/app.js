@@ -16,6 +16,12 @@ const {
   withoutItems,
 } = require("./actor-utils");
 const {
+  searchJournal,
+  buildFoldersById,
+  entryDetail,
+  journalFolderTree,
+} = require("./journal-search");
+const {
   parseHpChange,
   issueHpChangeConfirmation,
   consumeHpChangeConfirmation,
@@ -538,26 +544,33 @@ function createApp(deps) {
     catch(e) { res.status(500).json({ error: e.message }); }
   });
 
-  // Journal
+  // Journal — GM-scoped. Returns full search results including any
+  // GM-only material; there is no permission filtering at this route.
+  // Player-scoped equivalents (which do filter) are a later stage.
   app.get("/api/mcp/journal", async (req, res) => {
-    try { const w = await getWorld(); let e=w.journal||[]; if(req.query.query){const q=req.query.query.toLowerCase();e=e.filter(j=>(j.name||"").toLowerCase().includes(q)||(j.pages||[]).some(p=>(p.text?.content||"").toLowerCase().includes(q)));} res.json(e.slice(0,Math.min(+req.query.limit||20,100)).map(j=>({_id:j._id,name:j.name}))); }
+    try {
+      const w = await getWorld();
+      const foldersById = buildFoldersById(w.folders);
+      const { total, returned, results } = searchJournal(collectionValues(w.journal), foldersById, req.query);
+      res.json({ scope: "gm", total, returned, results });
+    }
     catch(e) { res.status(500).json({ error: e.message }); }
+  });
+  // Registered before /journal/:id — otherwise Express would match this
+  // path's "folders" segment as the :id param.
+  app.get("/api/mcp/journal/folders", async (_req, res) => {
+    try {
+      const w = await getWorld();
+      res.json({ folders: journalFolderTree(w.folders) });
+    } catch(e) { res.status(500).json({ error: e.message }); }
   });
   app.get("/api/mcp/journal/:id", async (req, res) => {
     try {
       const w = await getWorld();
-      const entry = w.journal?.find(j => j._id === req.params.id);
+      const entry = collectionValues(w.journal).find(j => j._id === req.params.id);
       if (!entry) return res.status(404).json({ error: "Not found" });
-      res.json({
-        _id: entry._id,
-        name: entry.name,
-        pages: collectionValues(entry.pages).map(page => ({
-          _id: page._id,
-          name: page.name,
-          type: page.type,
-          content: page.text?.content ?? "",
-        })),
-      });
+      const foldersById = buildFoldersById(w.folders);
+      res.json(entryDetail(entry, foldersById));
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
 

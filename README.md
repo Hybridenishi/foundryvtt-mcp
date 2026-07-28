@@ -50,9 +50,9 @@ mcp_servers:
     connect_timeout: 30
 ```
 
-## Tools (38 total)
+## Tools (39 total)
 
-### Read and service (22 tools)
+### Read and service (23 tools)
 
 | Tool | Description |
 |---|---|
@@ -74,8 +74,9 @@ mcp_servers:
 | `get_scene_tokens` | Tokens on a scene (positions, actors, disposition, vision) |
 | `get_combat_state` | Active combat: round, turn, sorted combatants, initiative |
 | `get_chat_log` | Recent chat messages, optional speaker filter |
-| `search_journal` | Full-text search journal entries by name + content |
-| `get_journal_entry` | Journal entry with all page content |
+| `search_journal` | Search journal entries by name, page content, type, tag, and folder; returns snippets and per-page hits |
+| `get_journal_entry` | Journal entry with all page content, classified type, and per-page content hashes |
+| `list_journal_folders` | Journal folders, for filtering `search_journal` |
 | `get_users` | All users with roles and online status |
 | `refresh_world` | Verify sidecar connectivity |
 
@@ -173,8 +174,9 @@ FOUNDRY_WRITE_ENABLED=true             # Must be set here as well as in the MCP 
 | POST | `/api/mcp/combats/next-turn` | Advance turn |
 | GET | `/api/mcp/chat-log` | Chat messages |
 | POST | `/api/mcp/chat` | Post message |
-| GET | `/api/mcp/journal` | Search journal |
-| GET | `/api/mcp/journal/:id` | One entry |
+| GET | `/api/mcp/journal` | Search journal (name, page content, type, tag, folder) |
+| GET | `/api/mcp/journal/:id` | One entry, all pages, with content hashes |
+| GET | `/api/mcp/journal/folders` | Journal folder tree |
 | GET | `/api/mcp/users` | All users |
 
 `/mcp-bridge` is an internal browser-to-sidecar transport, not a general MCP API. A GM browser pairs by presenting its existing Foundry session cookie; the sidecar validates that session and issues an in-memory, per-client token that expires when the bridge goes idle. No shared API key is shipped in the module. The separate sidecar API key must be supplied privately through environment configuration and must never be committed.
