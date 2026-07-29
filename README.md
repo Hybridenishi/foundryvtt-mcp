@@ -23,6 +23,7 @@ This file and [`AGENTS.md`](AGENTS.md) are the entry points; everything else liv
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Planned work, by phase |
 | [`docs/FINDINGS.md`](docs/FINDINGS.md) | Live-deployment inspection data, architectural findings, and current known gaps |
 | [`docs/PRIMER.md`](docs/PRIMER.md) | Developer reference: repo layout, deploy/test workflow |
+| [`docs/JOURNAL-API.md`](docs/JOURNAL-API.md) | Precise contract for an external client (search/read/write journal routes, real response examples, error semantics) — for building outside this repo, not for working inside it |
 | [`docs/SPEC.md`](docs/SPEC.md) | Original implementation plan — historical, not current |
 
 [`tests/`](tests/) holds both test suites: automated tests (`npm test`) and natural-language agent-behavior scenarios (`tests/scenarios/`), with `tests/README.md` explaining how to run each.
@@ -152,6 +153,7 @@ PLAYER_API_KEY=<private-player-scoped-api-key>   # Optional. Reaches only /api/m
 |---|---|---|
 | GET | `/api/mcp/refresh` | Health check |
 | POST | `/api/mcp/refresh` | Verify and refresh the current world snapshot |
+| GET | `/api/mcp/write-status` | Cheap publish preflight for an external client — writeEnabled, Foundry connectivity, and GM-bridge availability, with no outbound call to Foundry |
 | GET | `/api/mcp/world-summary` | Counts |
 | GET | `/api/mcp/system-info` | Foundry/system metadata, active modules, and prepared-bridge responders |
 | GET | `/api/mcp/actors` | Search actors |
@@ -212,7 +214,7 @@ type: person              # -> knowledge.type
 tags: [noble, ravencroft]  # -> knowledge.tags
 foundry-visibility: party  # gm (default) | party | players
 foundry-visibility-players: Alice, Bob   # required when foundry-visibility: players
-aliases: [Leon, Blackstone] # for wikilink resolution
+aliases: [Firstname, Lastname] # for wikilink resolution
 ---
 ```
 

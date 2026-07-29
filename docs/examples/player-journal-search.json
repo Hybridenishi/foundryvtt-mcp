@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "scope": "player",
+  "asPlayer": { "userId": "examplePlayer00001", "name": "<player-1>" },
+  "total": 1,
+  "returned": 1,
+  "results": [
+    {
+      "entryId": "exampleLocEntry001",
+      "entryName": "<location-name>",
+      "uuid": "JournalEntry.exampleLocEntry001",
+      "nameMatched": false,
+      "pageHits": []
+    }
+  ]
+}

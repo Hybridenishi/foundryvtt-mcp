@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "players": [
+    { "userId": "examplePlayer00001", "name": "<player-1>", "characterNames": ["<PC-A>"] },
+    { "userId": "examplePlayer00002", "name": "<player-2>", "characterNames": ["<PC-B>"] }
+  ]
+}

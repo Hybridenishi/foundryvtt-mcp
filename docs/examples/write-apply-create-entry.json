@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "operation": "create-entry",
+  "visibility": {
+    "profile": "players",
+    "visibleTo": [
+      { "userId": "examplePlayer00001", "name": "<player-1>" }
+    ]
+  },
+  "entryId": "abc123newEntry01",
+  "entryUuid": "JournalEntry.abc123newEntry01",
+  "entryName": "<Example Entry>",
+  "ownership": {
+    "default": 0,
+    "examplePlayer00001": 2
+  },
+  "pages": [
+    {
+      "pageId": "def456newPage001",
+      "pageUuid": "JournalEntry.abc123newEntry01.JournalEntryPage.def456newPage001",
+      "pageName": "Overview",
+      "ownership": {
+        "default": 0,
+        "examplePlayer00001": 2
+      }
+    }
+  ]
+}

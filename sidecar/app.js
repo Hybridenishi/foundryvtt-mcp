@@ -448,6 +448,23 @@ function createApp(deps) {
 
   app.get("/api/mcp/refresh", refreshResponse);
   app.post("/api/mcp/refresh", refreshResponse);
+
+  // Publish preflight for an external authoring client: everything a caller
+  // needs to know before letting a user compose something they intend to
+  // write. Deliberately reads only in-process state — unlike system-info,
+  // which makes two outbound HTTP calls to Foundry for version metadata,
+  // this is cheap enough to poll or to call on every compose-window open.
+  // The distinction that matters to callers: a journal write preview needs
+  // neither writeEnabled nor the bridge, but apply needs both.
+  app.get("/api/mcp/write-status", (_req, res) => {
+    const responders = activePreparedActorClients().length;
+    res.json({
+      schemaVersion: 1,
+      writeEnabled,
+      foundryConnected: isConnected(),
+      bridge: { available: responders > 0, responders },
+    });
+  });
   app.get("/api/mcp/world-summary", async (_req, res) => {
     try { const w = await getWorld(); res.json({ actors: w.actors?.length||0, scenes: w.scenes?.length||0, items: w.items?.length||0, users: w.users?.length||0 }); }
     catch(e) { res.status(500).json({ error: e.message }); }
@@ -831,6 +848,7 @@ function createApp(deps) {
       const { total, returned, results } = searchJournal(journalEntries, foldersById, req.query);
       const rawById = new Map(journalEntries.map((e) => [e._id, e]));
       res.json({
+        schemaVersion: 1,
         scope: "gm",
         total,
         returned,
@@ -844,7 +862,7 @@ function createApp(deps) {
   app.get("/api/mcp/journal/folders", async (_req, res) => {
     try {
       const w = await getWorld();
-      res.json({ folders: journalFolderTree(w.folders) });
+      res.json({ schemaVersion: 1, folders: journalFolderTree(w.folders) });
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
   app.get("/api/mcp/journal/:id", async (req, res) => {
@@ -854,7 +872,7 @@ function createApp(deps) {
       if (!entry) return res.status(404).json({ error: "Not found" });
       const foldersById = buildFoldersById(w.folders);
       const detail = entryDetail(entry, foldersById);
-      res.json(describeEntryDetail(entry, detail, w.users));
+      res.json({ schemaVersion: 1, ...describeEntryDetail(entry, detail, w.users) });
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -912,6 +930,7 @@ function createApp(deps) {
       const confirmation = issueJournalWriteConfirmation(parsed, resolvedOwnership, visibility.visibleTo);
 
       res.json({
+        schemaVersion: 1,
         operation: parsed.operation,
         entryId: parsed.entryId,
         pageId: parsed.pageId,
@@ -949,6 +968,7 @@ function createApp(deps) {
       });
 
       res.json({
+        schemaVersion: 1,
         ok: true,
         operation: parsed.operation,
         visibility: { profile: parsed.visibility.profile, visibleTo: payload.resolvedNames },
