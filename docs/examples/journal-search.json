@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "scope": "gm",
+  "total": 2,
+  "returned": 2,
+  "results": [
+    {
+      "entryId": "exampleNpcEntry01",
+      "entryName": "<npc-name>",
+      "uuid": "JournalEntry.exampleNpcEntry01",
+      "folder": {
+        "id": "npcsFolder0000001",
+        "name": "NPCs"
+      },
+      "knowledge": {
+        "type": "person",
+        "tags": []
+      },
+      "nameMatched": false,
+      "pageHits": [],
+      "visibility": {
+        "gmOnly": true,
+        "visibleTo": []
+      }
+    },
+    {
+      "entryId": "exampleLocEntry001",
+      "entryName": "<location-name>",
+      "uuid": "JournalEntry.exampleLocEntry001",
+      "folder": null,
+      "knowledge": {
+        "type": "other",
+        "tags": []
+      },
+      "nameMatched": false,
+      "pageHits": [],
+      "visibility": {
+        "gmOnly": false,
+        "visibleTo": [
+          { "userId": "examplePlayer00001", "name": "<player-1>" },
+          { "userId": "examplePlayer00002", "name": "<player-2>" }
+        ]
+      }
+    }
+  ]
+}

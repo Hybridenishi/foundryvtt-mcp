@@ -276,6 +276,96 @@ test("lists journal folders, excluding folders of other document types", async (
   assert.deepEqual(res.body.folders.map((f) => f.id), ["folder-locations"]);
 });
 
+// ── Versioned contract for external clients ──────────────────────────────
+
+test("every route an external authoring client depends on carries schemaVersion", async () => {
+  // docs/JOURNAL-API.md promises a versioned contract on exactly these
+  // routes. An external client (SessionScribe) pins to these shapes, so a
+  // response losing its version marker is a silent breaking change — this
+  // test is what makes that impossible to do accidentally.
+  const world = fixtureWorldWithOwnership();
+  const { server, port } = startApp({ world, deps: { writeEnabled: true } });
+
+  const gets = [
+    "/api/mcp/write-status",
+    "/api/mcp/players",
+    "/api/mcp/players/index-feed",
+    "/api/mcp/players/user-alice/journal",
+    "/api/mcp/players/user-alice/journal/journal-1",
+    "/api/mcp/journal",
+    "/api/mcp/journal/folders",
+    "/api/mcp/journal/journal-1",
+  ];
+  for (const path of gets) {
+    const res = await request(port(), "GET", path, { headers: auth() });
+    assert.equal(res.status, 200, `${path} should be reachable`);
+    assert.equal(res.body.schemaVersion, 1, `${path} should carry schemaVersion`);
+  }
+
+  // Write preview is a POST and needs a body; apply needs the bridge, so it
+  // is covered by the full preview→apply flow test further down.
+  const preview = await request(port(), "POST", "/api/mcp/journal/write/preview", {
+    headers: auth(),
+    body: { operation: "create-entry", name: "X", pages: [{ name: "P", content: "c" }], visibility: { profile: "gm" } },
+  });
+  server.close();
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.schemaVersion, 1);
+});
+
+// ── write-status preflight ───────────────────────────────────────────────
+
+test("write-status reports writes enabled and no bridge responder", async () => {
+  const { server, port } = startApp({ deps: { writeEnabled: true } });
+  const res = await request(port(), "GET", "/api/mcp/write-status", { headers: auth() });
+  server.close();
+  assert.equal(res.status, 200);
+  assert.equal(res.body.writeEnabled, true);
+  assert.equal(res.body.foundryConnected, true);
+  assert.deepEqual(res.body.bridge, { available: false, responders: 0 });
+});
+
+test("write-status reports writes disabled without needing the bridge", async () => {
+  const { server, port } = startApp({ deps: { writeEnabled: false } });
+  const res = await request(port(), "GET", "/api/mcp/write-status", { headers: auth() });
+  server.close();
+  assert.equal(res.body.writeEnabled, false);
+});
+
+test("write-status reports foundryConnected false when the socket is down", async () => {
+  const { server, port } = startApp({ deps: { isConnected: () => false } });
+  const res = await request(port(), "GET", "/api/mcp/write-status", { headers: auth() });
+  server.close();
+  // The shared auth middleware 503s when disconnected, which is itself the
+  // signal a client needs — assert that rather than pretending the body is
+  // reachable in this state.
+  assert.equal(res.status, 503);
+});
+
+test("write-status sees a paired bridge client as an available responder", async () => {
+  const { server, port } = startApp({ deps: { writeEnabled: true } });
+  const clientId = "client-writestatus-1234";
+  const ready = await request(port(), "POST", "/mcp-bridge/ready", {
+    headers: { cookie: "session=abc" },
+    body: { clientId },
+  });
+  assert.equal(ready.status, 200);
+
+  const res = await request(port(), "GET", "/api/mcp/write-status", { headers: auth() });
+  server.close();
+  assert.equal(res.body.bridge.available, true);
+  assert.equal(res.body.bridge.responders, 1);
+});
+
+test("write-status requires the GM key — the player key cannot reach it", async () => {
+  const { server, port } = startApp({ deps: { playerApiKey: "test-player-key" } });
+  const res = await request(port(), "GET", "/api/mcp/write-status", {
+    headers: { "x-api-key": "test-player-key" },
+  });
+  server.close();
+  assert.equal(res.status, 401);
+});
+
 test("system-info reports fixture data even when the live Foundry calls fail", async () => {
   const { server, port } = startApp();
   const res = await request(port(), "GET", "/api/mcp/system-info", { headers: auth() });

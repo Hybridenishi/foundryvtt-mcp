@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "operation": "create-entry",
+  "entryId": null,
+  "pageId": null,
+  "name": "<Example Entry>",
+  "pages": [
+    { "name": "Overview" }
+  ],
+  "visibility": {
+    "profile": "players",
+    "gmOnly": false,
+    "visibleTo": [
+      { "userId": "examplePlayer00001", "name": "<player-1>" }
+    ]
+  },
+  "confirmation": {
+    "confirmationToken": "73cce1bf-b3c9-4c7a-95a6-1b16b1c13b09",
+    "expiresAt": "2026-07-29T00:32:10.750Z"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "folders": [
+    { "id": "entriesFolder00001", "name": "Entries", "parentId": null },
+    { "id": "npcsFolder0000001", "name": "NPCs", "parentId": null },
+    { "id": "locsFolder0000001", "name": "Locations", "parentId": null }
+  ]
+}

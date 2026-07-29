@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "_id": "exampleNpcEntry01",
+  "name": "<npc-name>",
+  "uuid": "JournalEntry.exampleNpcEntry01",
+  "folder": {
+    "id": "npcsFolder0000001",
+    "name": "NPCs"
+  },
+  "knowledge": {
+    "type": "person",
+    "tags": []
+  },
+  "pages": [
+    {
+      "_id": "examplePageId0001",
+      "uuid": "JournalEntry.exampleNpcEntry01.JournalEntryPage.examplePageId0001",
+      "name": "Description",
+      "type": "text",
+      "content": "<p>Placeholder page content.</p>",
+      "contentHash": "fe6c514a7fa84b04869765e1611169d593ae00d6b8125b270b253b3f16de7242",
+      "visibility": {
+        "gmOnly": true,
+        "visibleTo": []
+      }
+    }
+  ],
+  "visibility": {
+    "gmOnly": true,
+    "visibleTo": []
+  }
+}

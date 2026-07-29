@@ -87,7 +87,7 @@ curl -s -H "X-API-Key: <private-sidecar-api-key>" \
 
 ### Endpoints available on sidecar (:30001)
 
-See [`README.md`'s "Endpoints (sidecar)" table](../README.md#endpoints-sidecar) for the full, current route list — kept in exactly one place so it can't drift out of sync with itself across two files. Route handlers themselves live in `sidecar/app.js`.
+See [`README.md`'s "Endpoints (sidecar)" table](../README.md#endpoints-sidecar) for the full, current route list — kept in exactly one place so it can't drift out of sync with itself across two files. Route handlers themselves live in `sidecar/app.js`. For a precise, versioned contract with real response examples aimed at a client built *outside* this repo, see [`docs/JOURNAL-API.md`](JOURNAL-API.md).
 
 ### Repeatable deploy and smoke checks
 

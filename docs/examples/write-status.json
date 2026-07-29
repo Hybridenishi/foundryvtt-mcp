@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "writeEnabled": true,
+  "foundryConnected": true,
+  "bridge": {
+    "available": false,
+    "responders": 0
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "unauthorized_401": { "error": "Unauthorized" },
+  "not_found_404": { "error": "Not found" },
+  "validation_missing_field_400": { "error": "name is required for create-entry" },
+  "validation_unresolvable_player_400": { "error": "Cannot resolve player 'NoSuchPlayer': no matching player." },
+  "confirmation_mismatch_409": { "error": "The confirmation token does not match this journal-write operation." },
+  "not_connected_503": { "error": "Not connected" },
+  "bridge_timeout_504": { "error": "Prepared actor request timed out. Open Foundry as a GM so the bridge module can respond." }
+}
