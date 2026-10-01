@@ -90,7 +90,7 @@ async function resolveUserId(session) {
 
 async function authenticate(session, userId) {
   const res = await axios.post(`${FOUNDRY_URL}/join`, {
-    action: "join", userid: userId, password: PASSWORD,
+    action: "join", userId: userId, password: PASSWORD,
   }, {
     headers: { Cookie: `session=${session}`, "Content-Type": "application/json" },
     timeout: TIMEOUT,

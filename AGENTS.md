@@ -45,7 +45,7 @@ Credentials come from private environment configuration only. Never commit them,
 ```
 1. GET /join → session cookie
 2. Socket.IO connect + Cookie header → 'session' event → emit 'getJoinData' → resolve user _id
-3. POST /join with {action:'join', userid, password} + Cookie → authenticated
+3. POST /join with {action:'join', userId, password} + Cookie → authenticated
 4. Socket.IO reconnect + Cookie → 'session' event (now with userId) → emit 'world' → receive world data
 ```
 
